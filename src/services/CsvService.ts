@@ -1,6 +1,13 @@
 import type { ImportResult, ProductRow } from '../domain/Product';
 import { detectColumnMap } from './ColumnMapper';
 
+const supportedEncodings = ['utf-8', 'windows-1252', 'iso-8859-1'] as const;
+
+interface DecodedText {
+  text: string;
+  encoding: string;
+}
+
 export function detectDelimiter(text: string): ',' | ';' | '\t' {
   const sample = text.split(/\r?\n/).slice(0, 5).join('\n');
   const options: Array<',' | ';' | '\t'> = [',', ';', '\t'];
@@ -57,7 +64,7 @@ export function parseDelimited(text: string, delimiter = detectDelimiter(text)):
   }
 
   const [headers = [], ...dataRows] = rows.filter((items) => items.some((value) => value.trim().length > 0));
-  const cleanHeaders = headers.map((header) => header.trim());
+  const cleanHeaders = headers.map((header) => header.trim().replace(/^\uFEFF/, ''));
 
   return dataRows.map((items) => {
     return cleanHeaders.reduce<ProductRow>((acc, header, index) => {
@@ -68,18 +75,44 @@ export function parseDelimited(text: string, delimiter = detectDelimiter(text)):
 }
 
 export async function importCsvFile(file: File): Promise<ImportResult> {
-  const text = await file.text();
-  const delimiter = detectDelimiter(text);
-  const rows = parseDelimited(text, delimiter);
+  const decoded = await readFileText(file);
+  const delimiter = detectDelimiter(decoded.text);
+  const rows = parseDelimited(decoded.text, delimiter);
   const headers = rows[0] ? Object.keys(rows[0]) : [];
 
   return {
     fileName: file.name,
     delimiter,
+    encoding: decoded.encoding,
     headers,
     rows,
     columnMap: detectColumnMap(headers)
   };
+}
+
+async function readFileText(file: File): Promise<DecodedText> {
+  const buffer = await file.arrayBuffer();
+  const candidates = supportedEncodings.map((encoding) => decodeBuffer(buffer, encoding));
+
+  return candidates.sort((a, b) => scoreDecodedText(a.text) - scoreDecodedText(b.text))[0];
+}
+
+function decodeBuffer(buffer: ArrayBuffer, encoding: string): DecodedText {
+  try {
+    const decoder = new TextDecoder(encoding, { fatal: encoding === 'utf-8' });
+    return { text: decoder.decode(buffer), encoding };
+  } catch {
+    const decoder = new TextDecoder(encoding);
+    return { text: decoder.decode(buffer), encoding: encoding + ' fallback' };
+  }
+}
+
+function scoreDecodedText(text: string): number {
+  const replacementCharacters = (text.match(/\uFFFD/g) ?? []).length;
+  const mojibakeSignals = (text.match(/\u00C3|\u00C2|\u00E2\u20AC|\u00E2\u0080/g) ?? []).length;
+  const likelySpanishChars = (text.match(/[\u00E1\u00E9\u00ED\u00F3\u00FA\u00C1\u00C9\u00CD\u00D3\u00DA\u00F1\u00D1\u00FC\u00DC]/g) ?? []).length;
+
+  return replacementCharacters * 100 + mojibakeSignals * 25 - likelySpanishChars;
 }
 
 function escapeCell(value: string): string {

@@ -2,15 +2,22 @@ import type { EnrichedProduct, ImportResult } from '../domain/Product';
 import { importCsvFile, toCsv } from '../services/CsvService';
 import { enrichProducts, toExportRows } from '../services/SeoBuilder';
 
+const initialPreviewLimit = 30;
+const previewStep = 30;
+
 interface AppState {
   importResult?: ImportResult;
   products: EnrichedProduct[];
+  omittedVariantRows: number;
+  visibleLimit: number;
   error?: string;
   isLoading: boolean;
 }
 
 const initialState: AppState = {
   products: [],
+  omittedVariantRows: 0,
+  visibleLimit: initialPreviewLimit,
   isLoading: false
 };
 
@@ -27,12 +34,15 @@ export function createApp(root: HTMLElement): void {
       return;
     }
 
-    setState({ isLoading: true, error: undefined });
+    setState({ isLoading: true, error: undefined, visibleLimit: initialPreviewLimit });
 
     try {
       const importResult = await importCsvFile(file);
-      const products = enrichProducts(importResult.rows, importResult.columnMap);
-      setState({ importResult, products, isLoading: false });
+      const enrichedProducts = enrichProducts(importResult.rows, importResult.columnMap);
+      const products = enrichedProducts.filter((product) => !isVariantPlaceholder(product.name));
+      const omittedVariantRows = enrichedProducts.length - products.length;
+
+      setState({ importResult, products, omittedVariantRows, isLoading: false });
     } catch (error) {
       setState({
         isLoading: false,
@@ -47,7 +57,7 @@ export function createApp(root: HTMLElement): void {
     }
 
     const csv = toCsv(toExportRows(state.products));
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -58,6 +68,10 @@ export function createApp(root: HTMLElement): void {
 
   const reset = () => {
     setState({ ...initialState });
+  };
+
+  const showMore = () => {
+    setState({ visibleLimit: state.visibleLimit + previewStep });
   };
 
   const render = () => {
@@ -73,6 +87,7 @@ export function createApp(root: HTMLElement): void {
     });
     root.querySelector<HTMLButtonElement>('#download-csv')?.addEventListener('click', downloadCsv);
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
+    root.querySelector<HTMLButtonElement>('#show-more')?.addEventListener('click', showMore);
   };
 
   render();
@@ -83,12 +98,12 @@ function layout(state: AppState): string {
     '<div class="app-shell">',
     '<header class="topbar"><div class="topbar__content">',
     '<div class="brand"><h1 class="brand__name">Pokestop SEO Builder</h1><p class="brand__tagline">Generador local de columnas SEO para catalogos de Tienda Nube.</p></div>',
-    '<div class="status-pill">Sprint 1 MVP</div>',
+    '<div class="status-pill">Sprint 1.5 MVP</div>',
     '</div></header>',
     '<main class="workspace">',
     importSection(state),
     summarySection(state),
-    previewSection(state.products),
+    previewSection(state.products, state.visibleLimit),
     '</main></div>'
   ].join('');
 }
@@ -107,7 +122,7 @@ function importSection(state: AppState): string {
     '</div></div>',
     '<div class="panel__body"><label class="upload-zone" for="product-file">',
     '<strong>Selecciona el archivo de productos</strong>',
-    '<span>El sistema detecta separador, columnas principales y descripciones HTML.</span>',
+    '<span>El sistema detecta separador, encoding, columnas principales y descripciones HTML.</span>',
     '<input class="file-input" id="product-file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />',
     '</label>' + loading + error + '</div></section>'
   ].join('');
@@ -120,19 +135,23 @@ function summarySection(state: AppState): string {
   return [
     '<section class="summary-grid" aria-label="Resumen de importacion">',
     metric('Archivo', state.importResult?.fileName ?? 'Sin archivo'),
-    metric('Productos', String(state.products.length)),
+    metric('Productos validos', String(state.products.length)),
+    metric('Variantes omitidas', String(state.omittedVariantRows)),
+    metric('Encoding', state.importResult?.encoding ?? '-'),
     metric('Columnas detectadas', String(mappedCount)),
     metric('Separador', formatDelimiter(state.importResult?.delimiter)),
     '</section>'
   ].join('');
 }
 
-function previewSection(products: EnrichedProduct[]): string {
+function previewSection(products: EnrichedProduct[], visibleLimit: number): string {
   if (!products.length) {
     return '<section class="empty-state">Importa un archivo para ver la previsualizacion de productos enriquecidos.</section>';
   }
 
-  const rows = products.slice(0, 30).map((product) => [
+  const visibleProducts = products.slice(0, visibleLimit);
+  const remaining = products.length - visibleProducts.length;
+  const rows = visibleProducts.map((product) => [
     '<tr>',
     '<td><div class="product-name">' + escapeHtml(product.name || 'Producto sin nombre') + '</div><div class="muted">' + escapeHtml(product.sku || 'Sin SKU') + '</div></td>',
     '<td>' + escapeHtml(product.category || 'Sin categoria') + '</td>',
@@ -144,11 +163,13 @@ function previewSection(products: EnrichedProduct[]): string {
 
   return [
     '<section class="panel">',
-    '<div class="panel__header"><div><h2 class="panel__title">Vista previa SEO</h2><p class="panel__hint">Se muestran hasta 30 productos. La exportacion incluye todos los registros.</p></div></div>',
+    '<div class="panel__header"><div><h2 class="panel__title">Vista previa SEO</h2><p class="panel__hint">Mostrando ' + visibleProducts.length + ' de ' + products.length + ' productos validos. La exportacion incluye todos los registros visibles como validos.</p></div></div>',
     '<div class="panel__body"><div class="table-wrap"><table>',
     '<thead><tr><th>Producto</th><th>Categoria</th><th>Titulo SEO</th><th>Meta descripcion</th><th>Slug</th></tr></thead>',
     '<tbody>' + rows + '</tbody>',
-    '</table></div></div></section>'
+    '</table></div>',
+    remaining > 0 ? '<div class="preview-footer"><button class="button button--secondary" id="show-more" type="button">Ver 30 mas</button><span class="muted">Quedan ' + remaining + ' productos por mostrar.</span></div>' : '',
+    '</div></section>'
   ].join('');
 }
 
@@ -166,6 +187,19 @@ function formatDelimiter(delimiter?: string): string {
 
 function buildExportFileName(fileName: string): string {
   return fileName.replace(/\.(csv|tsv)$/i, '') + '-seo.csv';
+}
+
+function isVariantPlaceholder(name: string): boolean {
+  return normalizeValue(name) === 'producto sin nombre';
+}
+
+function normalizeValue(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
 }
 
 function escapeHtml(value: string): string {

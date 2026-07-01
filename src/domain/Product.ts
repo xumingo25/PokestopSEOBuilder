@@ -38,6 +38,7 @@ export interface EnrichedProduct extends ProductInput {
 export interface ImportResult {
   fileName: string;
   delimiter: ',' | ';' | '\t';
+  encoding: string;
   headers: string[];
   rows: ProductRow[];
   columnMap: ColumnMap;
