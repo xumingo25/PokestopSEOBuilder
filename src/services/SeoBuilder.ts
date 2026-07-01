@@ -1,5 +1,6 @@
 import type { ColumnMap, EnrichedProduct, ProductInput, ProductRow, ProductSuggestion } from '../domain/Product';
 import { readMappedValue } from './ColumnMapper';
+import { buildEmptySuggestion } from './SuggestionBuilder';
 
 const fallbackSeoTitleColumn = 'Titulo SEO';
 const fallbackSeoDescriptionColumn = 'Descripcion SEO';
@@ -9,6 +10,10 @@ const suggestedSeoDescriptionColumn = 'Descripcion SEO Sugerida';
 const improvedDescriptionColumn = 'Descripcion Mejorada';
 const seoStatusColumn = 'Estado SEO';
 const descriptionStatusColumn = 'Estado Descripcion';
+const tcgdexIdColumn = 'TCGdex ID';
+const tcgdexMatchColumn = 'TCGdex Match';
+const tcgdexConfidenceColumn = 'TCGdex Confianza';
+const tcgdexSetColumn = 'TCGdex Set';
 
 export function createProductInput(row: ProductRow, sourceIndex: number, columnMap: ColumnMap): ProductInput {
   const currentDescription = readMappedValue(row, columnMap.description);
@@ -29,24 +34,22 @@ export function createProductInput(row: ProductRow, sourceIndex: number, columnM
   };
 }
 
-export function buildProductSuggestion(product: ProductInput): ProductSuggestion {
-  return {
-    suggestedSeoTitle: '',
-    suggestedSeoDescription: '',
-    improvedDescriptionHtml: '',
-    focusKeyword: buildFocusKeyword(product)
-  };
-}
-
 export function enrichProducts(rows: ProductRow[], columnMap: ColumnMap): EnrichedProduct[] {
   return rows.map((row, index) => {
     const product = createProductInput(row, index, columnMap);
 
     return {
       ...product,
-      suggestion: buildProductSuggestion(product)
+      suggestion: buildEmptySuggestion(product)
     };
   });
+}
+
+export function withSuggestion(product: EnrichedProduct, suggestion: ProductSuggestion): EnrichedProduct {
+  return {
+    ...product,
+    suggestion
+  };
 }
 
 export function toExportRows(
@@ -72,7 +75,11 @@ export function toExportRows(
       [suggestedSeoDescriptionColumn]: product.suggestion.suggestedSeoDescription,
       [improvedDescriptionColumn]: product.suggestion.improvedDescriptionHtml,
       [seoStatusColumn]: getExportStatus(isSeoUpdated, hasSeoSuggestion),
-      [descriptionStatusColumn]: getExportStatus(isDescriptionUpdated, hasDescriptionSuggestion)
+      [descriptionStatusColumn]: getExportStatus(isDescriptionUpdated, hasDescriptionSuggestion),
+      [tcgdexIdColumn]: product.suggestion.match.tcgdexId,
+      [tcgdexMatchColumn]: product.suggestion.match.status,
+      [tcgdexConfidenceColumn]: product.suggestion.match.confidence ? String(product.suggestion.match.confidence) : '',
+      [tcgdexSetColumn]: product.suggestion.match.setName
     };
 
     if (isSeoUpdated) {
@@ -102,13 +109,4 @@ function getExportStatus(isUpdated: boolean, hasSuggestion: boolean): string {
   }
 
   return hasSuggestion ? 'Pendiente' : 'Sin sugerencia';
-}
-
-function buildFocusKeyword(product: ProductInput): string {
-  return [product.name, product.category]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
 }

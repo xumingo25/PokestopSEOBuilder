@@ -1,5 +1,7 @@
 export type ProductRow = Record<string, string>;
 
+export type CardMatchStatus = 'pending' | 'searching' | 'found' | 'ambiguous' | 'not_found' | 'error';
+
 export interface ColumnMap {
   name?: string;
   description?: string;
@@ -27,11 +29,30 @@ export interface ProductInput {
   currentDescription: string;
 }
 
+export interface ParsedCardIdentity {
+  rawName: string;
+  normalizedName: string;
+  localId: string;
+  setTotal?: number;
+}
+
+export interface CardMatch {
+  status: CardMatchStatus;
+  tcgdexId: string;
+  cardName: string;
+  setName: string;
+  localId: string;
+  confidence: number;
+  reason: string;
+  error?: string;
+}
+
 export interface ProductSuggestion {
   suggestedSeoTitle: string;
   suggestedSeoDescription: string;
   improvedDescriptionHtml: string;
   focusKeyword: string;
+  match: CardMatch;
 }
 
 export interface EnrichedProduct extends ProductInput {

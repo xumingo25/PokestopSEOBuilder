@@ -118,7 +118,7 @@ button { cursor: pointer; }
 }
 
 .seo-grid {
-  min-width: 2100px;
+  min-width: 2500px;
 }
 
 .seo-grid th:nth-child(1),
@@ -181,6 +181,11 @@ button { cursor: pointer; }
   color: #52615d;
 }
 
+.status-badge--error {
+  background: #fff1ef;
+  color: #9d2d20;
+}
+
 
 
 .summary-grid {
@@ -209,6 +214,7 @@ td { font-size: 0.9rem; }
 .muted { color: #716a5f; }
 .empty-state, .error-box { border-radius: 8px; padding: 16px; }
 .empty-state { background: #f5efe3; color: #665b49; }
+.notice-panel { background: #eef8f5; border: 1px solid #b9d6cf; border-radius: 8px; color: #184a45; padding: 14px 16px; font-weight: 700; }
 .error-box { margin-top: 14px; background: #fff1ef; color: #9d2d20; border: 1px solid #f0b8ae; }
 .pagination {
   display: flex;

@@ -1,10 +1,13 @@
-import type { EnrichedProduct, ImportResult } from '../domain/Product';
+import type { EnrichedProduct, ImportResult, ProductSuggestion } from '../domain/Product';
 import { importCsvFile, toCsv } from '../services/CsvService';
+import { findBestCardMatch } from '../services/CardMatcher';
+import { buildSuggestionFromCard, buildSuggestionFromMatch } from '../services/SuggestionBuilder';
 import {
   enrichProducts,
   hasDescriptionSuggestionValue,
   hasSeoSuggestionValues,
-  toExportRows
+  toExportRows,
+  withSuggestion
 } from '../services/SeoBuilder';
 
 const pageSize = 30;
@@ -22,7 +25,9 @@ interface AppState {
   omittedVariantRows: number;
   currentPage: number;
   error?: string;
+  apiMessage?: string;
   isLoading: boolean;
+  isGeneratingSuggestions: boolean;
 }
 
 const initialState: AppState = {
@@ -31,7 +36,8 @@ const initialState: AppState = {
   updatedDescriptionIndexes: [],
   omittedVariantRows: 0,
   currentPage: 1,
-  isLoading: false
+  isLoading: false,
+  isGeneratingSuggestions: false
 };
 
 export function createApp(root: HTMLElement): void {
@@ -52,7 +58,8 @@ export function createApp(root: HTMLElement): void {
       error: undefined,
       currentPage: 1,
       updatedSeoIndexes: [],
-      updatedDescriptionIndexes: []
+      updatedDescriptionIndexes: [],
+      apiMessage: undefined
     });
 
     try {
@@ -66,6 +73,7 @@ export function createApp(root: HTMLElement): void {
         currentPage: 1,
         isLoading: false
       });
+      void generateSuggestionsForPage(1, catalog.products);
     } catch (error) {
       setState({
         isLoading: false,
@@ -88,6 +96,71 @@ export function createApp(root: HTMLElement): void {
     }
 
     setState({ updatedDescriptionIndexes: [...state.updatedDescriptionIndexes, sourceIndex] });
+  };
+
+  const generateSuggestionsForPage = async (page: number, sourceProducts = state.products) => {
+    if (!sourceProducts.length || state.isGeneratingSuggestions) {
+      return;
+    }
+
+    const { startIndex, endIndex } = getPageRange(page, sourceProducts.length);
+    const pageProducts = sourceProducts.slice(startIndex, endIndex);
+    const pendingCount = pageProducts.filter((product) => product.suggestion.match.status === 'pending').length;
+
+    if (!pendingCount) {
+      return;
+    }
+
+    setState({
+      isGeneratingSuggestions: true,
+      apiMessage: 'Consultando TCGdex para pagina ' + page + ' (' + pendingCount + ' pendientes)'
+    });
+    const nextProducts = [...sourceProducts];
+
+    for (let index = startIndex; index < endIndex && index < nextProducts.length; index += 1) {
+      const product = nextProducts[index];
+
+      if (product.suggestion.match.status !== 'pending') {
+        continue;
+      }
+
+      const searchingSuggestion: ProductSuggestion = {
+        ...product.suggestion,
+        match: {
+          ...product.suggestion.match,
+          status: 'searching',
+          reason: 'Consultando TCGdex'
+        }
+      };
+      nextProducts[index] = withSuggestion(product, searchingSuggestion);
+      setState({ products: [...nextProducts], apiMessage: 'Consultando ' + product.name });
+
+      try {
+        const result = await findBestCardMatch(product);
+        const suggestion = result.card
+          ? buildSuggestionFromCard(product, result.card, result.match)
+          : buildSuggestionFromMatch(result.match, product);
+        nextProducts[index] = withSuggestion(product, suggestion);
+      } catch (error) {
+        nextProducts[index] = withSuggestion(product, buildSuggestionFromMatch({
+          status: 'error',
+          tcgdexId: '',
+          cardName: '',
+          setName: '',
+          localId: '',
+          confidence: 0,
+          reason: 'Error consultando TCGdex',
+          error: error instanceof Error ? error.message : 'Error desconocido'
+        }, product));
+      }
+
+      setState({ products: [...nextProducts] });
+    }
+
+    setState({
+      isGeneratingSuggestions: false,
+      apiMessage: 'Pagina ' + page + ' consultada'
+    });
   };
 
   const downloadCsv = () => {
@@ -117,12 +190,16 @@ export function createApp(root: HTMLElement): void {
   };
 
   const goToPreviousPage = () => {
-    setState({ currentPage: Math.max(1, state.currentPage - 1) });
+    const nextPage = Math.max(1, state.currentPage - 1);
+    setState({ currentPage: nextPage });
+    void generateSuggestionsForPage(nextPage);
   };
 
   const goToNextPage = () => {
     const totalPages = getTotalPages(state.products.length);
-    setState({ currentPage: Math.min(totalPages, state.currentPage + 1) });
+    const nextPage = Math.min(totalPages, state.currentPage + 1);
+    setState({ currentPage: nextPage });
+    void generateSuggestionsForPage(nextPage);
   };
 
   const render = () => {
@@ -137,6 +214,7 @@ export function createApp(root: HTMLElement): void {
       void handleFile(input.files?.[0]);
     });
     root.querySelector<HTMLButtonElement>('#download-csv')?.addEventListener('click', downloadCsv);
+    root.querySelector<HTMLButtonElement>('#generate-suggestions')?.addEventListener('click', () => { void generateSuggestionsForPage(state.currentPage); });
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
     root.querySelector<HTMLButtonElement>('#preview-prev')?.addEventListener('click', goToPreviousPage);
     root.querySelector<HTMLButtonElement>('#preview-next')?.addEventListener('click', goToNextPage);
@@ -156,18 +234,19 @@ function layout(state: AppState): string {
     '<div class="app-shell">',
     '<header class="topbar"><div class="topbar__content">',
     '<div class="brand"><h1 class="brand__name">Pokestop SEO Builder</h1><p class="brand__tagline">Generador local de columnas SEO para catalogos de Tienda Nube.</p></div>',
-    '<div class="status-pill">Sprint 2</div>',
+    '<div class="status-pill">Sprint 3</div>',
     '</div></header>',
     '<main class="workspace">',
     importSection(state),
     summarySection(state),
+    apiStatusSection(state),
     previewSection(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.currentPage),
     '</main></div>'
   ].join('');
 }
 
 function importSection(state: AppState): string {
-  const disabled = state.products.length ? '' : 'disabled';
+  const disabled = state.products.length && !state.isGeneratingSuggestions ? '' : 'disabled';
   const loading = state.isLoading ? '<p class="muted">Procesando archivo...</p>' : '';
   const error = state.error ? '<div class="error-box">' + escapeHtml(state.error) + '</div>' : '';
 
@@ -176,6 +255,7 @@ function importSection(state: AppState): string {
     '<div class="panel__header"><div><h2 class="panel__title">Importar catalogo</h2><p class="panel__hint">Carga un CSV o TSV exportado desde Tienda Nube.</p></div>',
     '<div class="actions">',
     '<button class="button button--secondary" id="reset-app" type="button" ' + disabled + '>Limpiar</button>',
+    '<button class="button button--secondary" id="generate-suggestions" type="button" ' + disabled + '>Generar pagina visible</button>',
     '<button class="button button--primary" id="download-csv" type="button" ' + disabled + '>Descargar CSV</button>',
     '</div></div>',
     '<div class="panel__body"><label class="upload-zone" for="product-file">',
@@ -184,6 +264,14 @@ function importSection(state: AppState): string {
     '<input class="file-input" id="product-file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />',
     '</label>' + loading + error + '</div></section>'
   ].join('');
+}
+
+function apiStatusSection(state: AppState): string {
+  if (!state.isGeneratingSuggestions && !state.apiMessage) {
+    return '';
+  }
+
+  return '<section class="notice-panel">' + escapeHtml(state.apiMessage ?? '') + '</section>';
 }
 
 function summarySection(state: AppState): string {
@@ -196,6 +284,7 @@ function summarySection(state: AppState): string {
     metric('Productos validos', String(state.products.length)),
     metric('SEO actualizados', String(state.updatedSeoIndexes.length)),
     metric('Descripciones actualizadas', String(state.updatedDescriptionIndexes.length)),
+    metric('API encontradas', String(state.products.filter((product) => product.suggestion.match.status === 'found').length)),
     metric('Variantes omitidas', String(state.omittedVariantRows)),
     metric('Col. titulo SEO', detected?.seoTitle ?? 'No detectada'),
     metric('Col. desc. SEO', detected?.seoDescription ?? 'No detectada'),
@@ -233,7 +322,7 @@ function previewSection(
     paginationControls(safeCurrentPage, totalPages),
     '</div>',
     '<div class="panel__body"><div class="table-wrap"><table class="seo-grid">',
-    '<thead><tr><th>Producto</th><th>Titulo SEO actual</th><th>Descripcion SEO actual</th><th>Titulo SEO sugerido</th><th>Descripcion SEO sugerida</th><th>Descripcion actual</th><th>Descripcion mejorada</th><th>Estado SEO</th><th>Accion SEO</th><th>Estado descripcion</th><th>Accion descripcion</th></tr></thead>',
+    '<thead><tr><th>Producto</th><th>API</th><th>Match</th><th>Titulo SEO actual</th><th>Descripcion SEO actual</th><th>Titulo SEO sugerido</th><th>Descripcion SEO sugerida</th><th>Descripcion actual</th><th>Descripcion mejorada</th><th>Estado SEO</th><th>Accion SEO</th><th>Estado descripcion</th><th>Accion descripcion</th></tr></thead>',
     '<tbody>' + rows + '</tbody>',
     '</table></div></div></section>'
   ].join('');
@@ -246,6 +335,8 @@ function productRow(product: EnrichedProduct, isSeoUpdated: boolean, isDescripti
   return [
     '<tr>',
     '<td><div class="product-name">' + escapeHtml(product.name) + '</div><div class="muted">' + escapeHtml(product.sku || 'Sin SKU') + '</div></td>',
+    '<td>' + apiBadge(product) + '</td>',
+    '<td>' + matchSummary(product) + '</td>',
     '<td>' + valueOrEmpty(product.currentSeoTitle) + '</td>',
     '<td>' + valueOrEmpty(product.currentSeoDescription) + '</td>',
     '<td>' + valueOrEmpty(product.suggestion.suggestedSeoTitle) + '</td>',
@@ -258,6 +349,44 @@ function productRow(product: EnrichedProduct, isSeoUpdated: boolean, isDescripti
     '<td>' + actionButton('description', product.sourceIndex, isDescriptionUpdated, hasDescriptionSuggestion) + '</td>',
     '</tr>'
   ].join('');
+}
+
+function apiBadge(product: EnrichedProduct): string {
+  const status = product.suggestion.match.status;
+  const labelByStatus: Record<string, string> = {
+    pending: 'Pendiente',
+    searching: 'Consultando',
+    found: 'Encontrada',
+    ambiguous: 'Ambigua',
+    not_found: 'No encontrada',
+    error: 'Error'
+  };
+  const className = status === 'found'
+    ? 'status-badge status-badge--done'
+    : status === 'pending'
+      ? 'status-badge status-badge--idle'
+      : status === 'searching'
+        ? 'status-badge'
+        : 'status-badge status-badge--error';
+
+  return '<span class="' + className + '">' + escapeHtml(labelByStatus[status] ?? status) + '</span>';
+}
+
+function matchSummary(product: EnrichedProduct): string {
+  const match = product.suggestion.match;
+
+  if (match.status === 'pending') {
+    return '<span class="muted">Sin consulta</span>';
+  }
+
+  if (match.status === 'found' || match.status === 'ambiguous') {
+    return [
+      '<div class="product-name">' + escapeHtml(match.cardName || match.tcgdexId) + '</div>',
+      '<div class="muted">' + escapeHtml([match.tcgdexId, match.setName, match.confidence ? match.confidence + '%' : ''].filter(Boolean).join(' - ')) + '</div>'
+    ].join('');
+  }
+
+  return '<span class="muted">' + escapeHtml(match.reason || match.error || 'Sin resultado') + '</span>';
 }
 
 function buildCatalog(importResult: ImportResult): CatalogBuildResult {
@@ -313,6 +442,16 @@ function paginationControls(currentPage: number, totalPages: number): string {
 
 function getTotalPages(totalItems: number): number {
   return Math.max(1, Math.ceil(totalItems / pageSize));
+}
+
+function getPageRange(page: number, totalItems: number): { startIndex: number; endIndex: number } {
+  const safePage = Math.min(Math.max(page, 1), getTotalPages(totalItems));
+  const startIndex = (safePage - 1) * pageSize;
+
+  return {
+    startIndex,
+    endIndex: Math.min(startIndex + pageSize, totalItems)
+  };
 }
 
 function metric(label: string, value: string): string {
