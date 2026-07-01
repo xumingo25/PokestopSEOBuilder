@@ -15,11 +15,19 @@ export interface TcgDexCard {
   rarity?: string;
   hp?: number;
   types?: string[];
+  supertype?: string;
+  subtypes?: string[];
   description?: string;
   stage?: string;
+  dexId?: number[];
+  regulationMark?: string;
+  legal?: { standard?: boolean; expanded?: boolean };
+  variants?: Record<string, boolean>;
   set?: {
     id: string;
     name: string;
+    logo?: string;
+    symbol?: string;
     cardCount?: {
       official?: number;
       total?: number;

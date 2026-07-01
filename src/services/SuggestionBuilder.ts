@@ -56,23 +56,74 @@ function buildSeoDescription(card: TcgDexCard): string {
 }
 
 function buildImprovedDescription(card: TcgDexCard): string {
-  const rows = [
-    ['Edicion', card.set?.name],
-    ['Numero', card.localId],
+  const setUrl = card.set?.id ? 'https://www.tcgdex.net/en/sets/' + encodeURIComponent(card.set.id) : '';
+  const setLabel = card.set?.name ?? card.set?.id ?? '';
+  const setValue = setUrl
+    ? '<a href="' + setUrl + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(setLabel) + '</a>'
+    : escapeHtml(setLabel);
+  const identityRows: Array<[string, string | undefined, boolean?]> = [
+    ['Nombre', card.name],
+    ['Expansion', setValue, true],
+    ['Numero de carta', card.localId],
     ['Rareza', card.rarity],
+    ['Estado', 'NM (Near Mint)']
+  ];
+  const classificationRows: Array<[string, string | undefined, boolean?]> = [
+    ['Supertipo', card.supertype || card.category],
+    ['Subtipos', card.subtypes?.join(', ')],
     ['Tipo', card.types?.join(', ')],
+    ['Etapa', card.stage],
+    ['HP', card.hp ? String(card.hp) : ''],
+    ['Pokedex', card.dexId?.join(', ')],
+    ['Marca de regulacion', card.regulationMark],
     ['Ilustrador', card.illustrator]
-  ].filter(([, value]) => Boolean(value));
+  ];
+  const legalRows: Array<[string, string | undefined, boolean?]> = [
+    ['Standard', formatBoolean(card.legal?.standard)],
+    ['Expanded', formatBoolean(card.legal?.expanded)]
+  ];
+  const variantRows = Object.entries(card.variants ?? {})
+    .filter(([, available]) => available)
+    .map(([variant]) => ['Variante', formatLabel(variant)] as [string, string]);
   const attacks = card.attacks?.filter((attack) => attack.name || attack.effect || attack.damage) ?? [];
 
   return [
     '<section class="pokemon-card-description">',
     '<h2>' + escapeHtml(card.name) + '</h2>',
+    '<p><strong>Condicion:</strong> NM (Near Mint).</p>',
     card.description ? '<p>' + escapeHtml(card.description) + '</p>' : '',
-    rows.length ? '<ul>' + rows.map(([label, value]) => '<li><strong>' + label + ':</strong> ' + escapeHtml(String(value)) + '</li>').join('') + '</ul>' : '',
+    buildDefinitionList('Datos de la carta', identityRows),
+    buildDefinitionList('Clasificacion', classificationRows),
+    variantRows.length ? buildDefinitionList('Variantes disponibles', variantRows) : '',
+    buildDefinitionList('Legalidad', legalRows),
     attacks.length ? '<h3>Ataques</h3><ul>' + attacks.map((attack) => '<li><strong>' + escapeHtml(attack.name ?? 'Ataque') + ':</strong> ' + escapeHtml([attack.damage, attack.effect].filter(Boolean).join(' - ')) + '</li>').join('') + '</ul>' : '',
     '</section>'
   ].filter(Boolean).join('');
+}
+
+function buildDefinitionList(title: string, rows: Array<[string, string | undefined, boolean?]>): string {
+  const items = rows
+    .filter(([, value]) => Boolean(value))
+    .map(([label, value, isHtml]) => '<li><strong>' + escapeHtml(label) + ':</strong> ' + (isHtml ? value : escapeHtml(String(value))) + '</li>')
+    .join('');
+
+  return items ? '<h3>' + escapeHtml(title) + '</h3><ul>' + items + '</ul>' : '';
+}
+
+function formatBoolean(value?: boolean): string {
+  if (value === undefined) {
+    return '';
+  }
+
+  return value ? 'Legal' : 'No legal';
+}
+
+function formatLabel(value: string): string {
+  return value
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function buildFocusKeyword(product: ProductInput): string {
