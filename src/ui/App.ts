@@ -17,6 +17,8 @@ type PreviewFilter = 'all' | 'unmatched';
 interface CatalogBuildResult {
   products: EnrichedProduct[];
   omittedVariantRows: number;
+  updatedSeoIndexes: number[];
+  updatedDescriptionIndexes: number[];
 }
 
 interface AppState {
@@ -79,8 +81,8 @@ export function createApp(root: HTMLElement): void {
       setState({
         importResult,
         ...catalog,
-        updatedSeoIndexes: [],
-        updatedDescriptionIndexes: [],
+        updatedSeoIndexes: catalog.updatedSeoIndexes,
+        updatedDescriptionIndexes: catalog.updatedDescriptionIndexes,
         currentPage: 1,
         previewFilter: 'all',
         hasCompletedUnmatchedScan: false,
@@ -257,6 +259,10 @@ export function createApp(root: HTMLElement): void {
   };
 
   const downloadCsv = () => {
+    downloadExportCsv(state.updatedSeoIndexes, state.updatedDescriptionIndexes);
+  };
+
+  const downloadExportCsv = (updatedSeoIndexes: number[], updatedDescriptionIndexes: number[]) => {
     if (!state.products.length || !state.importResult) {
       return;
     }
@@ -264,8 +270,8 @@ export function createApp(root: HTMLElement): void {
     const csv = toCsv(
       toExportRows(
         state.products,
-        state.updatedSeoIndexes,
-        state.updatedDescriptionIndexes,
+        updatedSeoIndexes,
+        updatedDescriptionIndexes,
         state.importResult.columnMap
       )
     );
@@ -276,6 +282,34 @@ export function createApp(root: HTMLElement): void {
     link.download = buildExportFileName(state.importResult.fileName);
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const updateAllFoundProducts = () => {
+    if (!state.products.length || !state.importResult || state.isScanningUnmatched) {
+      return;
+    }
+
+    const foundProducts = state.products.filter((product) => product.suggestion.match.status === 'found');
+    const nextSeoIndexes = mergeIndexes(
+      state.updatedSeoIndexes,
+      foundProducts.filter(hasSeoSuggestionValues).map((product) => product.sourceIndex)
+    );
+    const nextDescriptionIndexes = mergeIndexes(
+      state.updatedDescriptionIndexes,
+      foundProducts.filter(hasDescriptionSuggestionValue).map((product) => product.sourceIndex)
+    );
+
+    if (!foundProducts.length) {
+      setState({ apiMessage: 'No hay cartas encontradas para actualizar.' });
+      return;
+    }
+
+    setState({
+      updatedSeoIndexes: nextSeoIndexes,
+      updatedDescriptionIndexes: nextDescriptionIndexes,
+      apiMessage: 'Actualizacion masiva lista. Productos encontrados actualizados: ' + foundProducts.length
+    });
+    downloadExportCsv(nextSeoIndexes, nextDescriptionIndexes);
   };
 
 
@@ -350,7 +384,7 @@ export function createApp(root: HTMLElement): void {
     root.querySelector<HTMLButtonElement>('#download-unmatched')?.addEventListener('click', downloadUnmatchedCsv);
     root.querySelector<HTMLButtonElement>('#show-unmatched')?.addEventListener('click', showUnmatchedProducts);
     root.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', showAllProducts);
-    root.querySelector<HTMLButtonElement>('#generate-suggestions')?.addEventListener('click', () => { void generateSuggestionsForPage(state.currentPage); });
+    root.querySelector<HTMLButtonElement>('#bulk-update-found')?.addEventListener('click', updateAllFoundProducts);
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
     root.querySelector<HTMLButtonElement>('#preview-prev')?.addEventListener('click', goToPreviousPage);
     root.querySelector<HTMLButtonElement>('#preview-next')?.addEventListener('click', goToNextPage);
@@ -383,7 +417,7 @@ function layout(state: AppState): string {
 
 function importSection(state: AppState): string {
   const hasProductsDisabled = state.products.length ? '' : 'disabled';
-  const generateDisabled = state.products.length && !state.isGeneratingSuggestions && !state.isScanningUnmatched ? '' : 'disabled';
+  const bulkUpdateDisabled = state.products.length && state.hasCompletedUnmatchedScan && !state.isScanningUnmatched ? '' : 'disabled';
   const unmatchedDisabled = state.products.length && state.hasCompletedUnmatchedScan ? '' : 'disabled';
   const loading = state.isLoading ? '<p class="muted">Procesando archivo...</p>' : '';
   const error = state.error ? '<div class="error-box">' + escapeHtml(state.error) + '</div>' : '';
@@ -393,7 +427,7 @@ function importSection(state: AppState): string {
     '<div class="panel__header"><div><h2 class="panel__title">Importar catalogo</h2><p class="panel__hint">Carga un CSV o TSV exportado desde Tienda Nube.</p></div>',
     '<div class="actions">',
     '<button class="button button--secondary" id="reset-app" type="button" ' + hasProductsDisabled + '>Limpiar</button>',
-    '<button class="button button--secondary" id="generate-suggestions" type="button" ' + generateDisabled + '>Generar pagina visible</button>',
+    '<button class="button button--secondary" id="bulk-update-found" type="button" ' + bulkUpdateDisabled + '>Actualizar todos los encontrados</button>',
     '<button class="button button--secondary" id="show-unmatched" type="button" ' + unmatchedDisabled + '>Mostrar no encontrados</button>',
     '<button class="button button--secondary" id="show-all" type="button" ' + hasProductsDisabled + '>Mostrar todos</button>',
     '<button class="button button--secondary" id="download-unmatched" type="button" ' + unmatchedDisabled + '>Descargar no encontrados</button>',
@@ -545,7 +579,13 @@ function buildCatalog(importResult: ImportResult): CatalogBuildResult {
 
   return {
     products,
-    omittedVariantRows: enrichedProducts.length - products.length
+    omittedVariantRows: enrichedProducts.length - products.length,
+    updatedSeoIndexes: products
+      .filter((product) => isUpdatedStatus(product.row['Estado SEO']))
+      .map((product) => product.sourceIndex),
+    updatedDescriptionIndexes: products
+      .filter((product) => isUpdatedStatus(product.row['Estado Descripcion']) || isImprovedStatus(product.row['Estado Descripcion']))
+      .map((product) => product.sourceIndex)
   };
 }
 
@@ -577,6 +617,10 @@ function actionButton(kind: 'seo' | 'description', sourceIndex: number, isUpdate
   return '<button class="button button--primary button--small" type="button" data-update-description="' + sourceIndex + '">Actualizar descripcion</button>';
 }
 
+
+function mergeIndexes(currentIndexes: number[], newIndexes: number[]): number[] {
+  return Array.from(new Set([...currentIndexes, ...newIndexes]));
+}
 
 function getPreviewProducts(products: EnrichedProduct[], previewFilter: PreviewFilter): EnrichedProduct[] {
   return previewFilter === 'unmatched' ? getUnmatchedProducts(products) : products;
@@ -660,6 +704,14 @@ function hasValidProductName(name: string): boolean {
   const normalizedName = normalizeValue(name);
 
   return normalizedName.length > 0 && normalizedName !== 'producto sin nombre';
+}
+
+function isUpdatedStatus(value: string | undefined): boolean {
+  return normalizeValue(value ?? '') === 'actualizado';
+}
+
+function isImprovedStatus(value: string | undefined): boolean {
+  return normalizeValue(value ?? '') === 'mejorado';
 }
 
 function normalizeValue(value: string): string {

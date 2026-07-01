@@ -67,15 +67,17 @@ export function toExportRows(
   return products.map((product) => {
     const hasSeoSuggestion = hasSeoSuggestionValues(product);
     const hasDescriptionSuggestion = hasDescriptionSuggestionValue(product);
-    const isSeoUpdated = updatedSeoSet.has(product.sourceIndex) && hasSeoSuggestion;
-    const isDescriptionUpdated = updatedDescriptionSet.has(product.sourceIndex) && hasDescriptionSuggestion;
+    const isSeoMarkedUpdated = updatedSeoSet.has(product.sourceIndex);
+    const isDescriptionMarkedUpdated = updatedDescriptionSet.has(product.sourceIndex);
+    const isSeoUpdated = isSeoMarkedUpdated && hasSeoSuggestion;
+    const isDescriptionUpdated = isDescriptionMarkedUpdated && hasDescriptionSuggestion;
     const row: ProductRow = {
       ...product.row,
       [suggestedSeoTitleColumn]: product.suggestion.suggestedSeoTitle,
       [suggestedSeoDescriptionColumn]: product.suggestion.suggestedSeoDescription,
       [improvedDescriptionColumn]: product.suggestion.improvedDescriptionHtml,
-      [seoStatusColumn]: getExportStatus(isSeoUpdated, hasSeoSuggestion),
-      [descriptionStatusColumn]: getExportStatus(isDescriptionUpdated, hasDescriptionSuggestion),
+      [seoStatusColumn]: getExportStatus(isSeoMarkedUpdated, hasSeoSuggestion, 'Actualizado'),
+      [descriptionStatusColumn]: getExportStatus(isDescriptionMarkedUpdated, hasDescriptionSuggestion, 'Mejorado'),
       [tcgdexIdColumn]: product.suggestion.match.tcgdexId,
       [tcgdexMatchColumn]: product.suggestion.match.status,
       [tcgdexConfidenceColumn]: product.suggestion.match.confidence ? String(product.suggestion.match.confidence) : '',
@@ -103,9 +105,9 @@ export function hasDescriptionSuggestionValue(product: EnrichedProduct): boolean
   return Boolean(product.suggestion.improvedDescriptionHtml);
 }
 
-function getExportStatus(isUpdated: boolean, hasSuggestion: boolean): string {
+function getExportStatus(isUpdated: boolean, hasSuggestion: boolean, updatedLabel: string): string {
   if (isUpdated) {
-    return 'Actualizado';
+    return updatedLabel;
   }
 
   return hasSuggestion ? 'Pendiente' : 'Sin sugerencia';
