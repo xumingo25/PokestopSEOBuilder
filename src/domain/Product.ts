@@ -8,6 +8,8 @@ export interface ColumnMap {
   category?: string;
   tags?: string;
   price?: string;
+  seoTitle?: string;
+  seoDescription?: string;
 }
 
 export interface ProductInput {
@@ -20,19 +22,20 @@ export interface ProductInput {
   category: string;
   tags: string;
   price: string;
+  currentSeoTitle: string;
+  currentSeoDescription: string;
+  currentDescription: string;
 }
 
-export interface SeoOutput {
-  seoTitle: string;
-  metaDescription: string;
-  slug: string;
-  cleanDescription: string;
-  shortDescription: string;
+export interface ProductSuggestion {
+  suggestedSeoTitle: string;
+  suggestedSeoDescription: string;
+  improvedDescriptionHtml: string;
   focusKeyword: string;
 }
 
 export interface EnrichedProduct extends ProductInput {
-  seo: SeoOutput;
+  suggestion: ProductSuggestion;
 }
 
 export interface ImportResult {

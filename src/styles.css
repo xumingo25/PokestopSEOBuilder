@@ -110,6 +110,78 @@ button { cursor: pointer; }
 .button--primary:hover { background: #15544d; }
 .button--secondary { background: #fff; color: #184a45; border-color: #b9d6cf; }
 .button:disabled { cursor: not-allowed; opacity: 0.55; }
+.button--small {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.seo-grid {
+  min-width: 2100px;
+}
+
+.seo-grid th:nth-child(1),
+.seo-grid td:nth-child(1) {
+  width: 220px;
+}
+
+.seo-grid th:nth-child(2),
+.seo-grid td:nth-child(2),
+.seo-grid th:nth-child(4),
+.seo-grid td:nth-child(4) {
+  width: 220px;
+}
+
+.seo-grid th:nth-child(3),
+.seo-grid td:nth-child(3),
+.seo-grid th:nth-child(5),
+.seo-grid td:nth-child(5),
+.seo-grid th:nth-child(6),
+.seo-grid td:nth-child(6),
+.seo-grid th:nth-child(7),
+.seo-grid td:nth-child(7) {
+  width: 300px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #fff7df;
+  color: #7d5b00;
+  font-size: 0.8rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.status-badge--done {
+  background: #e7f6ef;
+  color: #17613f;
+}
+.html-preview {
+  display: block;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #4f4638;
+  background: #fbf7ed;
+  border: 1px solid #eadfcb;
+  border-radius: 6px;
+  padding: 8px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.status-badge--idle {
+  background: #edf1f0;
+  color: #52615d;
+}
+
+
 
 .summary-grid {
   display: grid;
