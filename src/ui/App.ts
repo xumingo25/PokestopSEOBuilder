@@ -1,5 +1,6 @@
-import type { EnrichedProduct, ImportResult, ProductSuggestion } from '../domain/Product';
+import type { EnrichedProduct, ImportResult, ProductRow, ProductSuggestion } from '../domain/Product';
 import { importCsvFile, toCsv } from '../services/CsvService';
+import { parseCardIdentity } from '../services/CardIdentityParser';
 import { findBestCardMatch } from '../services/CardMatcher';
 import { buildSuggestionFromCard, buildSuggestionFromMatch } from '../services/SuggestionBuilder';
 import {
@@ -11,6 +12,7 @@ import {
 } from '../services/SeoBuilder';
 
 const pageSize = 30;
+type PreviewFilter = 'all' | 'unmatched';
 
 interface CatalogBuildResult {
   products: EnrichedProduct[];
@@ -24,10 +26,13 @@ interface AppState {
   updatedDescriptionIndexes: number[];
   omittedVariantRows: number;
   currentPage: number;
+  previewFilter: PreviewFilter;
+  hasCompletedUnmatchedScan: boolean;
   error?: string;
   apiMessage?: string;
   isLoading: boolean;
   isGeneratingSuggestions: boolean;
+  isScanningUnmatched: boolean;
 }
 
 const initialState: AppState = {
@@ -36,8 +41,11 @@ const initialState: AppState = {
   updatedDescriptionIndexes: [],
   omittedVariantRows: 0,
   currentPage: 1,
+  previewFilter: 'all',
+  hasCompletedUnmatchedScan: false,
   isLoading: false,
-  isGeneratingSuggestions: false
+  isGeneratingSuggestions: false,
+  isScanningUnmatched: false
 };
 
 export function createApp(root: HTMLElement): void {
@@ -59,7 +67,10 @@ export function createApp(root: HTMLElement): void {
       currentPage: 1,
       updatedSeoIndexes: [],
       updatedDescriptionIndexes: [],
-      apiMessage: undefined
+      apiMessage: undefined,
+      previewFilter: 'all',
+      hasCompletedUnmatchedScan: false,
+      isScanningUnmatched: false
     });
 
     try {
@@ -71,9 +82,11 @@ export function createApp(root: HTMLElement): void {
         updatedSeoIndexes: [],
         updatedDescriptionIndexes: [],
         currentPage: 1,
+        previewFilter: 'all',
+        hasCompletedUnmatchedScan: false,
         isLoading: false
       });
-      void generateSuggestionsForPage(1, catalog.products);
+      void scanAllProductsForUnmatched(catalog.products);
     } catch (error) {
       setState({
         isLoading: false,
@@ -99,7 +112,7 @@ export function createApp(root: HTMLElement): void {
   };
 
   const generateSuggestionsForPage = async (page: number, sourceProducts = state.products) => {
-    if (!sourceProducts.length || state.isGeneratingSuggestions) {
+    if (!sourceProducts.length || state.isGeneratingSuggestions || state.isScanningUnmatched) {
       return;
     }
 
@@ -163,6 +176,86 @@ export function createApp(root: HTMLElement): void {
     });
   };
 
+  const scanAllProductsForUnmatched = async (sourceProducts = state.products) => {
+    if (!sourceProducts.length || state.isGeneratingSuggestions || state.isScanningUnmatched) {
+      return;
+    }
+
+    const pendingCount = sourceProducts.filter((product) => product.suggestion.match.status === 'pending').length;
+
+    if (!pendingCount) {
+      setState({
+        hasCompletedUnmatchedScan: true,
+        apiMessage: 'Revision completa terminada. Cartas por corregir: ' + getUnmatchedProducts(sourceProducts).length
+      });
+      return;
+    }
+
+    setState({
+      isScanningUnmatched: true,
+      hasCompletedUnmatchedScan: false,
+      apiMessage: 'Revision completa en segundo plano: 0 de ' + pendingCount + ' cartas consultadas'
+    });
+
+    const nextProducts = [...sourceProducts];
+    let processedCount = 0;
+
+    for (let index = 0; index < nextProducts.length; index += 1) {
+      const product = nextProducts[index];
+
+      if (product.suggestion.match.status !== 'pending') {
+        continue;
+      }
+
+      const searchingSuggestion: ProductSuggestion = {
+        ...product.suggestion,
+        match: {
+          ...product.suggestion.match,
+          status: 'searching',
+          reason: 'Consultando TCGdex'
+        }
+      };
+      nextProducts[index] = withSuggestion(product, searchingSuggestion);
+      setState({
+        products: [...nextProducts],
+        apiMessage: 'Revision completa en segundo plano: ' + processedCount + ' de ' + pendingCount + ' cartas consultadas'
+      });
+
+      try {
+        const result = await findBestCardMatch(product);
+        const suggestion = result.card
+          ? buildSuggestionFromCard(product, result.card, result.match)
+          : buildSuggestionFromMatch(result.match, product);
+        nextProducts[index] = withSuggestion(product, suggestion);
+      } catch (error) {
+        nextProducts[index] = withSuggestion(product, buildSuggestionFromMatch({
+          status: 'error',
+          tcgdexId: '',
+          cardName: '',
+          setName: '',
+          localId: '',
+          confidence: 0,
+          reason: 'Error consultando TCGdex',
+          error: error instanceof Error ? error.message : 'Error desconocido'
+        }, product));
+      }
+
+      processedCount += 1;
+      setState({
+        products: [...nextProducts],
+        apiMessage: 'Revision completa en segundo plano: ' + processedCount + ' de ' + pendingCount + ' cartas consultadas'
+      });
+    }
+
+    setState({
+      products: [...nextProducts],
+      isScanningUnmatched: false,
+      hasCompletedUnmatchedScan: true,
+      currentPage: 1,
+      apiMessage: 'Revision completa terminada. Cartas por corregir: ' + getUnmatchedProducts(nextProducts).length
+    });
+  };
+
   const downloadCsv = () => {
     if (!state.products.length || !state.importResult) {
       return;
@@ -185,6 +278,32 @@ export function createApp(root: HTMLElement): void {
     URL.revokeObjectURL(url);
   };
 
+
+
+  const downloadUnmatchedCsv = () => {
+    const rows = buildUnmatchedRows(state.products);
+    const pendingCount = state.products.filter((product) => ['pending', 'searching'].includes(product.suggestion.match.status)).length;
+
+    if (!rows.length) {
+      const pendingMessage = pendingCount ? ' Aun hay ' + pendingCount + ' cartas sin consultar.' : '';
+      setState({ apiMessage: 'No hay cartas consultadas pendientes de correccion manual.' + pendingMessage });
+      return;
+    }
+
+    const csv = toCsv(rows);
+    const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'cartas-no-encontradas.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    setState({
+      apiMessage: 'Listado generado con ' + rows.length + ' cartas para revisar manualmente.'
+        + (pendingCount ? ' Aun hay ' + pendingCount + ' cartas sin consultar.' : '')
+    });
+  };
+
   const reset = () => {
     setState({ ...initialState });
   };
@@ -192,14 +311,28 @@ export function createApp(root: HTMLElement): void {
   const goToPreviousPage = () => {
     const nextPage = Math.max(1, state.currentPage - 1);
     setState({ currentPage: nextPage });
-    void generateSuggestionsForPage(nextPage);
+
+    if (state.previewFilter === 'all') {
+      void generateSuggestionsForPage(nextPage);
+    }
   };
 
   const goToNextPage = () => {
-    const totalPages = getTotalPages(state.products.length);
+    const totalPages = getTotalPages(getPreviewProducts(state.products, state.previewFilter).length);
     const nextPage = Math.min(totalPages, state.currentPage + 1);
     setState({ currentPage: nextPage });
-    void generateSuggestionsForPage(nextPage);
+
+    if (state.previewFilter === 'all') {
+      void generateSuggestionsForPage(nextPage);
+    }
+  };
+
+  const showUnmatchedProducts = () => {
+    setState({ previewFilter: 'unmatched', currentPage: 1 });
+  };
+
+  const showAllProducts = () => {
+    setState({ previewFilter: 'all', currentPage: 1 });
   };
 
   const render = () => {
@@ -214,6 +347,9 @@ export function createApp(root: HTMLElement): void {
       void handleFile(input.files?.[0]);
     });
     root.querySelector<HTMLButtonElement>('#download-csv')?.addEventListener('click', downloadCsv);
+    root.querySelector<HTMLButtonElement>('#download-unmatched')?.addEventListener('click', downloadUnmatchedCsv);
+    root.querySelector<HTMLButtonElement>('#show-unmatched')?.addEventListener('click', showUnmatchedProducts);
+    root.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', showAllProducts);
     root.querySelector<HTMLButtonElement>('#generate-suggestions')?.addEventListener('click', () => { void generateSuggestionsForPage(state.currentPage); });
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
     root.querySelector<HTMLButtonElement>('#preview-prev')?.addEventListener('click', goToPreviousPage);
@@ -234,19 +370,21 @@ function layout(state: AppState): string {
     '<div class="app-shell">',
     '<header class="topbar"><div class="topbar__content">',
     '<div class="brand"><h1 class="brand__name">Pokestop SEO Builder</h1><p class="brand__tagline">Generador local de columnas SEO para catalogos de Tienda Nube.</p></div>',
-    '<div class="status-pill">Sprint 3</div>',
+    '<div class="status-pill">Sprint 3.5</div>',
     '</div></header>',
     '<main class="workspace">',
     importSection(state),
     summarySection(state),
     apiStatusSection(state),
-    previewSection(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.currentPage),
+    previewSection(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.currentPage, state.previewFilter),
     '</main></div>'
   ].join('');
 }
 
 function importSection(state: AppState): string {
-  const disabled = state.products.length && !state.isGeneratingSuggestions ? '' : 'disabled';
+  const hasProductsDisabled = state.products.length ? '' : 'disabled';
+  const generateDisabled = state.products.length && !state.isGeneratingSuggestions && !state.isScanningUnmatched ? '' : 'disabled';
+  const unmatchedDisabled = state.products.length && state.hasCompletedUnmatchedScan ? '' : 'disabled';
   const loading = state.isLoading ? '<p class="muted">Procesando archivo...</p>' : '';
   const error = state.error ? '<div class="error-box">' + escapeHtml(state.error) + '</div>' : '';
 
@@ -254,9 +392,12 @@ function importSection(state: AppState): string {
     '<section class="panel">',
     '<div class="panel__header"><div><h2 class="panel__title">Importar catalogo</h2><p class="panel__hint">Carga un CSV o TSV exportado desde Tienda Nube.</p></div>',
     '<div class="actions">',
-    '<button class="button button--secondary" id="reset-app" type="button" ' + disabled + '>Limpiar</button>',
-    '<button class="button button--secondary" id="generate-suggestions" type="button" ' + disabled + '>Generar pagina visible</button>',
-    '<button class="button button--primary" id="download-csv" type="button" ' + disabled + '>Descargar CSV</button>',
+    '<button class="button button--secondary" id="reset-app" type="button" ' + hasProductsDisabled + '>Limpiar</button>',
+    '<button class="button button--secondary" id="generate-suggestions" type="button" ' + generateDisabled + '>Generar pagina visible</button>',
+    '<button class="button button--secondary" id="show-unmatched" type="button" ' + unmatchedDisabled + '>Mostrar no encontrados</button>',
+    '<button class="button button--secondary" id="show-all" type="button" ' + hasProductsDisabled + '>Mostrar todos</button>',
+    '<button class="button button--secondary" id="download-unmatched" type="button" ' + unmatchedDisabled + '>Descargar no encontrados</button>',
+    '<button class="button button--primary" id="download-csv" type="button" ' + hasProductsDisabled + '>Descargar CSV</button>',
     '</div></div>',
     '<div class="panel__body"><label class="upload-zone" for="product-file">',
     '<strong>Selecciona el archivo de productos</strong>',
@@ -267,7 +408,7 @@ function importSection(state: AppState): string {
 }
 
 function apiStatusSection(state: AppState): string {
-  if (!state.isGeneratingSuggestions && !state.apiMessage) {
+  if (!state.isGeneratingSuggestions && !state.isScanningUnmatched && !state.apiMessage) {
     return '';
   }
 
@@ -285,6 +426,8 @@ function summarySection(state: AppState): string {
     metric('SEO actualizados', String(state.updatedSeoIndexes.length)),
     metric('Descripciones actualizadas', String(state.updatedDescriptionIndexes.length)),
     metric('API encontradas', String(state.products.filter((product) => product.suggestion.match.status === 'found').length)),
+    metric('Consultadas API', String(state.products.filter((product) => product.suggestion.match.status !== 'pending').length)),
+    metric('Por corregir', String(getUnmatchedProducts(state.products).length)),
     metric('Variantes omitidas', String(state.omittedVariantRows)),
     metric('Col. titulo SEO', detected?.seoTitle ?? 'No detectada'),
     metric('Col. desc. SEO', detected?.seoDescription ?? 'No detectada'),
@@ -297,19 +440,26 @@ function previewSection(
   products: EnrichedProduct[],
   updatedSeoIndexes: number[],
   updatedDescriptionIndexes: number[],
-  currentPage: number
+  currentPage: number,
+  previewFilter: PreviewFilter
 ): string {
   if (!products.length) {
     return '<section class="empty-state">Importa un archivo para ver la grilla comparativa.</section>';
   }
 
+  const previewProducts = getPreviewProducts(products, previewFilter);
+
+  if (!previewProducts.length) {
+    return '<section class="empty-state">No hay productos para mostrar con el filtro actual.</section>';
+  }
+
   const updatedSeoSet = new Set(updatedSeoIndexes);
   const updatedDescriptionSet = new Set(updatedDescriptionIndexes);
-  const totalPages = getTotalPages(products.length);
+  const totalPages = getTotalPages(previewProducts.length);
   const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
   const startIndex = (safeCurrentPage - 1) * pageSize;
   const endIndex = startIndex + pageSize;
-  const visibleProducts = products.slice(startIndex, endIndex);
+  const visibleProducts = previewProducts.slice(startIndex, endIndex);
   const rows = visibleProducts.map((product) => productRow(
     product,
     updatedSeoSet.has(product.sourceIndex),
@@ -318,7 +468,7 @@ function previewSection(
 
   return [
     '<section class="panel">',
-    '<div class="panel__header"><div><h2 class="panel__title">Vista previa SEO y descripcion</h2><p class="panel__hint">Mostrando ' + (startIndex + 1) + '-' + Math.min(endIndex, products.length) + ' de ' + products.length + ' productos validos.</p></div>',
+    '<div class="panel__header"><div><h2 class="panel__title">Vista previa SEO y descripcion</h2><p class="panel__hint">' + previewTitle(previewFilter) + '. Mostrando ' + (startIndex + 1) + '-' + Math.min(endIndex, previewProducts.length) + ' de ' + previewProducts.length + ' productos.</p></div>',
     paginationControls(safeCurrentPage, totalPages),
     '</div>',
     '<div class="panel__body"><div class="table-wrap"><table class="seo-grid">',
@@ -425,6 +575,42 @@ function actionButton(kind: 'seo' | 'description', sourceIndex: number, isUpdate
   }
 
   return '<button class="button button--primary button--small" type="button" data-update-description="' + sourceIndex + '">Actualizar descripcion</button>';
+}
+
+
+function getPreviewProducts(products: EnrichedProduct[], previewFilter: PreviewFilter): EnrichedProduct[] {
+  return previewFilter === 'unmatched' ? getUnmatchedProducts(products) : products;
+}
+
+function previewTitle(previewFilter: PreviewFilter): string {
+  return previewFilter === 'unmatched' ? 'Solo cartas no encontradas' : 'Todos los productos validos';
+}
+
+function getUnmatchedProducts(products: EnrichedProduct[]): EnrichedProduct[] {
+  return products.filter((product) => ['ambiguous', 'not_found', 'error'].includes(product.suggestion.match.status));
+}
+
+function buildUnmatchedRows(products: EnrichedProduct[]): ProductRow[] {
+  return getUnmatchedProducts(products).map((product) => {
+    const identity = parseCardIdentity(product.name);
+
+    return {
+      producto: product.name,
+      sku: product.sku,
+      codigo_extraido: identity.localId,
+      numero_extraido: identity.localNumber,
+      prefijo_extraido: identity.localPrefix,
+      total_set_extraido: identity.setTotal ? String(identity.setTotal) : '',
+      estado_api: product.suggestion.match.status,
+      motivo: product.suggestion.match.reason || product.suggestion.match.error || '',
+      tcgdex_id_detectado: product.suggestion.match.tcgdexId,
+      carta_detectada: product.suggestion.match.cardName,
+      expansion_detectada: product.suggestion.match.setName,
+      confianza: product.suggestion.match.confidence ? String(product.suggestion.match.confidence) : '',
+      titulo_seo_actual: product.currentSeoTitle,
+      descripcion_seo_actual: product.currentSeoDescription
+    };
+  });
 }
 
 function paginationControls(currentPage: number, totalPages: number): string {

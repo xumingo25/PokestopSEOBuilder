@@ -19,15 +19,20 @@ const ignoredNameTokens = new Set([
 ]);
 
 export function parseCardIdentity(productName: string): ParsedCardIdentity {
-  const bracketMatch = productName.match(/\[\s*([A-Za-z]*\d+[A-Za-z]*)\s*(?:\/\s*(\d+))?\s*\]/);
+  const bracketMatch = productName.match(/\[\s*([^\]/]+?)\s*(?:\/\s*([^\]]+?))?\s*\]/);
+  const rawLocalId = extractLocalId(bracketMatch?.[1] ?? '');
   const rawName = productName.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
   const normalizedName = normalizeCardName(rawName);
+  const localParts = parseLocalId(rawLocalId);
+  const totalNumber = extractLocalId(bracketMatch?.[2] ?? '').match(/\d+/)?.[0];
 
   return {
     rawName,
     normalizedName,
-    localId: bracketMatch?.[1] ?? '',
-    setTotal: bracketMatch?.[2] ? Number(bracketMatch[2]) : undefined
+    localId: normalizeLocalId(rawLocalId),
+    localNumber: localParts.number,
+    localPrefix: localParts.prefix,
+    setTotal: totalNumber ? Number(totalNumber) : undefined
   };
 }
 
@@ -41,6 +46,35 @@ export function normalizeCardName(value: string): string {
     .filter((token) => token && !ignoredNameTokens.has(token))
     .join(' ')
     .trim();
+}
+
+export function normalizeLocalId(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '');
+}
+
+function extractLocalId(value: string): string {
+  const compactValue = normalizeLocalId(value);
+  const directMatch = compactValue.match(/[a-z]*\d+[a-z]*/);
+
+  if (directMatch) {
+    return directMatch[0];
+  }
+
+  return compactValue;
+}
+
+export function parseLocalId(value: string): { prefix: string; number: string } {
+  const normalized = normalizeLocalId(value);
+  const match = normalized.match(/^([a-z]*)(\d+)([a-z]*)$/);
+
+  if (!match) {
+    return { prefix: '', number: normalized.replace(/^0+/, '') };
+  }
+
+  return {
+    prefix: match[1] + match[3],
+    number: match[2].replace(/^0+/, '') || '0'
+  };
 }
 
 export function tokenizeCardName(value: string): string[] {

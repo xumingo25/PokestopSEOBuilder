@@ -33,6 +33,8 @@ export interface ParsedCardIdentity {
   rawName: string;
   normalizedName: string;
   localId: string;
+  localNumber: string;
+  localPrefix: string;
   setTotal?: number;
 }
 

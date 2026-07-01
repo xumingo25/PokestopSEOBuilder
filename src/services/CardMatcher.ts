@@ -1,5 +1,5 @@
-import type { CardMatch, EnrichedProduct } from '../domain/Product';
-import { normalizeCardName, parseCardIdentity, tokenizeCardName } from './CardIdentityParser';
+import type { CardMatch, EnrichedProduct, ParsedCardIdentity } from '../domain/Product';
+import { normalizeCardName, normalizeLocalId, parseCardIdentity, parseLocalId, tokenizeCardName } from './CardIdentityParser';
 import { getCard, listCards, type TcgDexCard, type TcgDexCardBrief } from './TcgDexApi';
 
 interface RankedBrief {
@@ -24,10 +24,10 @@ export async function findBestCardMatch(product: EnrichedProduct): Promise<{ mat
 
   const cards = await listCards();
   const rankedBriefs = cards
-    .map((card) => ({ card, score: scoreBrief(card, identity.normalizedName, identity.localId) }))
+    .map((card) => ({ card, score: scoreBrief(card, identity) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 12);
+    .slice(0, 16);
 
   if (!rankedBriefs.length) {
     return {
@@ -42,7 +42,7 @@ export async function findBestCardMatch(product: EnrichedProduct): Promise<{ mat
         return undefined;
       }
 
-      return scoreDetailedCard(result.value, rankedBriefs[index], identity.normalizedName, identity.localId, identity.setTotal);
+      return scoreDetailedCard(result.value, rankedBriefs[index], identity);
     })
     .filter((entry): entry is RankedCard => Boolean(entry))
     .sort((a, b) => b.score - a.score);
@@ -69,34 +69,31 @@ export async function findBestCardMatch(product: EnrichedProduct): Promise<{ mat
   };
 }
 
-function scoreBrief(card: TcgDexCardBrief, normalizedName: string, localId: string): number {
+function scoreBrief(card: TcgDexCardBrief, identity: ParsedCardIdentity): number {
   const cardName = normalizeCardName(card.name);
-  const nameScore = scoreName(cardName, normalizedName);
-  const localIdScore = localId && normalizeLocalId(card.localId) === normalizeLocalId(localId) ? 50 : 0;
+  const nameScore = scoreName(cardName, identity.normalizedName);
+  const localIdScore = scoreLocalId(card.localId, identity);
 
-  if (localId && localIdScore === 0 && nameScore < 35) {
+  if (identity.localId && localIdScore === 0 && nameScore < 35) {
     return 0;
   }
 
   return localIdScore + nameScore;
 }
 
-function scoreDetailedCard(
-  card: TcgDexCard,
-  brief: RankedBrief,
-  normalizedName: string,
-  localId: string,
-  setTotal?: number
-): RankedCard {
+function scoreDetailedCard(card: TcgDexCard, brief: RankedBrief, identity: ParsedCardIdentity): RankedCard {
   const reasons: string[] = [];
   let score = brief.score;
+  const localScore = scoreLocalId(card.localId, identity);
 
-  if (localId && normalizeLocalId(card.localId) === normalizeLocalId(localId)) {
+  if (localScore >= 70) {
+    reasons.push('codigo local exacto coincide');
+  } else if (localScore >= 45) {
     reasons.push('numero local coincide');
   }
 
   const cardName = normalizeCardName(card.name);
-  const nameScore = scoreName(cardName, normalizedName);
+  const nameScore = scoreName(cardName, identity.normalizedName);
 
   if (nameScore < 20) {
     score -= 40;
@@ -105,15 +102,42 @@ function scoreDetailedCard(
     reasons.push('nombre coincide');
   }
 
-  if (setTotal && card.set?.cardCount?.official === setTotal) {
+  if (identity.setTotal && card.set?.cardCount?.official === identity.setTotal) {
     score += 20;
     reasons.push('total oficial del set coincide');
-  } else if (setTotal && card.set?.cardCount?.total === setTotal) {
+  } else if (identity.setTotal && card.set?.cardCount?.total === identity.setTotal) {
     score += 10;
     reasons.push('total del set coincide');
   }
 
   return { card, score, reasons };
+}
+
+function scoreLocalId(cardLocalId: string, identity: ParsedCardIdentity): number {
+  if (!identity.localId) {
+    return 0;
+  }
+
+  const cardNormalized = normalizeLocalId(cardLocalId);
+  const cardParts = parseLocalId(cardLocalId);
+
+  if (cardNormalized === identity.localId) {
+    return 75;
+  }
+
+  if (identity.localPrefix && cardParts.prefix === identity.localPrefix && cardParts.number === identity.localNumber) {
+    return 70;
+  }
+
+  if (!identity.localPrefix && cardParts.number === identity.localNumber) {
+    return 50;
+  }
+
+  if (identity.localPrefix && cardParts.number === identity.localNumber) {
+    return 35;
+  }
+
+  return 0;
 }
 
 function scoreName(cardName: string, productName: string): number {
@@ -149,8 +173,4 @@ function createMatch(status: CardMatch['status'], confidence: number, reason: st
     confidence: Math.min(100, Math.max(0, Math.round(confidence))),
     reason
   };
-}
-
-function normalizeLocalId(value: string): string {
-  return value.trim().toLowerCase().replace(/^0+/, '');
 }
