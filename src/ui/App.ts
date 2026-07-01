@@ -39,7 +39,7 @@ export function createApp(root: HTMLElement): void {
     try {
       const importResult = await importCsvFile(file);
       const enrichedProducts = enrichProducts(importResult.rows, importResult.columnMap);
-      const products = enrichedProducts.filter((product) => !isVariantPlaceholder(product.name));
+      const products = enrichedProducts.filter((product) => hasValidProductName(product.name));
       const omittedVariantRows = enrichedProducts.length - products.length;
 
       setState({ importResult, products, omittedVariantRows, isLoading: false });
@@ -189,8 +189,10 @@ function buildExportFileName(fileName: string): string {
   return fileName.replace(/\.(csv|tsv)$/i, '') + '-seo.csv';
 }
 
-function isVariantPlaceholder(name: string): boolean {
-  return normalizeValue(name) === 'producto sin nombre';
+function hasValidProductName(name: string): boolean {
+  const normalizedName = normalizeValue(name);
+
+  return normalizedName.length > 0 && normalizedName !== 'producto sin nombre';
 }
 
 function normalizeValue(value: string): string {
