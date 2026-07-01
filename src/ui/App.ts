@@ -2,14 +2,13 @@ import type { EnrichedProduct, ImportResult } from '../domain/Product';
 import { importCsvFile, toCsv } from '../services/CsvService';
 import { enrichProducts, toExportRows } from '../services/SeoBuilder';
 
-const initialPreviewLimit = 30;
-const previewStep = 30;
+const pageSize = 30;
 
 interface AppState {
   importResult?: ImportResult;
   products: EnrichedProduct[];
   omittedVariantRows: number;
-  visibleLimit: number;
+  currentPage: number;
   error?: string;
   isLoading: boolean;
 }
@@ -17,7 +16,7 @@ interface AppState {
 const initialState: AppState = {
   products: [],
   omittedVariantRows: 0,
-  visibleLimit: initialPreviewLimit,
+  currentPage: 1,
   isLoading: false
 };
 
@@ -34,7 +33,7 @@ export function createApp(root: HTMLElement): void {
       return;
     }
 
-    setState({ isLoading: true, error: undefined, visibleLimit: initialPreviewLimit });
+    setState({ isLoading: true, error: undefined, currentPage: 1 });
 
     try {
       const importResult = await importCsvFile(file);
@@ -42,7 +41,7 @@ export function createApp(root: HTMLElement): void {
       const products = enrichedProducts.filter((product) => hasValidProductName(product.name));
       const omittedVariantRows = enrichedProducts.length - products.length;
 
-      setState({ importResult, products, omittedVariantRows, isLoading: false });
+      setState({ importResult, products, omittedVariantRows, currentPage: 1, isLoading: false });
     } catch (error) {
       setState({
         isLoading: false,
@@ -70,8 +69,13 @@ export function createApp(root: HTMLElement): void {
     setState({ ...initialState });
   };
 
-  const showMore = () => {
-    setState({ visibleLimit: state.visibleLimit + previewStep });
+  const goToPreviousPage = () => {
+    setState({ currentPage: Math.max(1, state.currentPage - 1) });
+  };
+
+  const goToNextPage = () => {
+    const totalPages = getTotalPages(state.products.length);
+    setState({ currentPage: Math.min(totalPages, state.currentPage + 1) });
   };
 
   const render = () => {
@@ -87,7 +91,8 @@ export function createApp(root: HTMLElement): void {
     });
     root.querySelector<HTMLButtonElement>('#download-csv')?.addEventListener('click', downloadCsv);
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
-    root.querySelector<HTMLButtonElement>('#show-more')?.addEventListener('click', showMore);
+    root.querySelector<HTMLButtonElement>('#preview-prev')?.addEventListener('click', goToPreviousPage);
+    root.querySelector<HTMLButtonElement>('#preview-next')?.addEventListener('click', goToNextPage);
   };
 
   render();
@@ -103,7 +108,7 @@ function layout(state: AppState): string {
     '<main class="workspace">',
     importSection(state),
     summarySection(state),
-    previewSection(state.products, state.visibleLimit),
+    previewSection(state.products, state.currentPage),
     '</main></div>'
   ].join('');
 }
@@ -144,16 +149,19 @@ function summarySection(state: AppState): string {
   ].join('');
 }
 
-function previewSection(products: EnrichedProduct[], visibleLimit: number): string {
+function previewSection(products: EnrichedProduct[], currentPage: number): string {
   if (!products.length) {
     return '<section class="empty-state">Importa un archivo para ver la previsualizacion de productos enriquecidos.</section>';
   }
 
-  const visibleProducts = products.slice(0, visibleLimit);
-  const remaining = products.length - visibleProducts.length;
+  const totalPages = getTotalPages(products.length);
+  const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const visibleProducts = products.slice(startIndex, endIndex);
   const rows = visibleProducts.map((product) => [
     '<tr>',
-    '<td><div class="product-name">' + escapeHtml(product.name || 'Producto sin nombre') + '</div><div class="muted">' + escapeHtml(product.sku || 'Sin SKU') + '</div></td>',
+    '<td><div class="product-name">' + escapeHtml(product.name) + '</div><div class="muted">' + escapeHtml(product.sku || 'Sin SKU') + '</div></td>',
     '<td>' + escapeHtml(product.category || 'Sin categoria') + '</td>',
     '<td>' + escapeHtml(product.seo.seoTitle) + '</td>',
     '<td>' + escapeHtml(product.seo.metaDescription) + '</td>',
@@ -163,14 +171,32 @@ function previewSection(products: EnrichedProduct[], visibleLimit: number): stri
 
   return [
     '<section class="panel">',
-    '<div class="panel__header"><div><h2 class="panel__title">Vista previa SEO</h2><p class="panel__hint">Mostrando ' + visibleProducts.length + ' de ' + products.length + ' productos validos. La exportacion incluye todos los registros visibles como validos.</p></div></div>',
+    '<div class="panel__header"><div><h2 class="panel__title">Vista previa SEO</h2><p class="panel__hint">Mostrando ' + (startIndex + 1) + '-' + Math.min(endIndex, products.length) + ' de ' + products.length + ' productos validos.</p></div>',
+    paginationControls(safeCurrentPage, totalPages),
+    '</div>',
     '<div class="panel__body"><div class="table-wrap"><table>',
     '<thead><tr><th>Producto</th><th>Categoria</th><th>Titulo SEO</th><th>Meta descripcion</th><th>Slug</th></tr></thead>',
     '<tbody>' + rows + '</tbody>',
     '</table></div>',
-    remaining > 0 ? '<div class="preview-footer"><button class="button button--secondary" id="show-more" type="button">Ver 30 mas</button><span class="muted">Quedan ' + remaining + ' productos por mostrar.</span></div>' : '',
     '</div></section>'
   ].join('');
+}
+
+function paginationControls(currentPage: number, totalPages: number): string {
+  const previousDisabled = currentPage <= 1 ? 'disabled' : '';
+  const nextDisabled = currentPage >= totalPages ? 'disabled' : '';
+
+  return [
+    '<nav class="pagination" aria-label="Paginacion de productos">',
+    '<button class="pagination__button" id="preview-prev" type="button" ' + previousDisabled + ' aria-label="Pagina anterior">Anterior</button>',
+    '<span class="pagination__status">Pagina ' + currentPage + ' de ' + totalPages + '</span>',
+    '<button class="pagination__button" id="preview-next" type="button" ' + nextDisabled + ' aria-label="Pagina siguiente">Siguiente</button>',
+    '</nav>'
+  ].join('');
+}
+
+function getTotalPages(totalItems: number): number {
+  return Math.max(1, Math.ceil(totalItems / pageSize));
 }
 
 function metric(label: string, value: string): string {
