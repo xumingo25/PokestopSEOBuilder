@@ -27,7 +27,7 @@ export async function findBestCardMatch(product: EnrichedProduct): Promise<{ mat
     .map((card) => ({ card, score: scoreBrief(card, identity) }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 16);
+    .slice(0, identity.localPrefix ? 40 : 16);
 
   if (!rankedBriefs.length) {
     return {
@@ -59,6 +59,7 @@ export async function findBestCardMatch(product: EnrichedProduct): Promise<{ mat
 
   if (second && best.score - second.score <= 8) {
     return {
+      card: best.card,
       match: createMatch('ambiguous', best.score, 'Hay mas de una carta posible: ' + best.card.name + ' / ' + second.card.name, best.card)
     };
   }
@@ -92,6 +93,13 @@ function scoreDetailedCard(card: TcgDexCard, brief: RankedBrief, identity: Parse
     reasons.push('numero local coincide');
   }
 
+  const expansionScore = scoreExpansionHint(card, identity);
+
+  if (expansionScore) {
+    score += expansionScore;
+    reasons.push('expansion/promocional coincide');
+  }
+
   const cardName = normalizeCardName(card.name);
   const nameScore = scoreName(cardName, identity.normalizedName);
 
@@ -102,12 +110,16 @@ function scoreDetailedCard(card: TcgDexCard, brief: RankedBrief, identity: Parse
     reasons.push('nombre coincide');
   }
 
-  if (identity.setTotal && card.set?.cardCount?.official === identity.setTotal) {
-    score += 20;
-    reasons.push('total oficial del set coincide');
-  } else if (identity.setTotal && card.set?.cardCount?.total === identity.setTotal) {
-    score += 10;
-    reasons.push('total del set coincide');
+  const setTotalScore = scoreSetTotal(card, identity);
+
+  if (setTotalScore) {
+    score += setTotalScore;
+    reasons.push('tamano de expansion coincide');
+  }
+
+  if (isBeyondOfficialCount(card)) {
+    score += 8;
+    reasons.push('carta fuera del listado oficial del set');
   }
 
   return { card, score, reasons };
@@ -134,7 +146,82 @@ function scoreLocalId(cardLocalId: string, identity: ParsedCardIdentity): number
   }
 
   if (identity.localPrefix && cardParts.number === identity.localNumber) {
+    return 45;
+  }
+
+  return 0;
+}
+
+function scoreSetTotal(card: TcgDexCard, identity: ParsedCardIdentity): number {
+  if (!identity.setTotal) {
+    return 0;
+  }
+
+  if (card.set?.cardCount?.official === identity.setTotal) {
+    return 20;
+  }
+
+  if (card.set?.cardCount?.total === identity.setTotal) {
+    return 15;
+  }
+
+  return 0;
+}
+
+function isBeyondOfficialCount(card: TcgDexCard): boolean {
+  const cardNumber = Number(parseLocalId(card.localId).number);
+  const officialCount = card.set?.cardCount?.official;
+  const totalCount = card.set?.cardCount?.total;
+
+  return Boolean(
+    cardNumber
+      && officialCount
+      && totalCount
+      && cardNumber > officialCount
+      && cardNumber <= totalCount
+  );
+}
+
+function scoreExpansionHint(card: TcgDexCard, identity: ParsedCardIdentity): number {
+  if (!identity.expansionHints.length) {
+    return 0;
+  }
+
+  const setText = normalizeCardName([
+    card.set?.id ?? '',
+    card.set?.name ?? ''
+  ].join(' '));
+
+  if (!setText) {
+    return 0;
+  }
+
+  const matchedHint = identity.expansionHints.find((hint) => setText.includes(hint) || hint.includes(setText));
+
+  if (matchedHint) {
     return 35;
+  }
+
+  const setTokens = new Set(tokenizeCardName(setText));
+  const bestTokenRatio = Math.max(
+    0,
+    ...identity.expansionHints.map((hint) => {
+      const hintTokens = tokenizeCardName(hint);
+
+      if (!hintTokens.length) {
+        return 0;
+      }
+
+      return hintTokens.filter((token) => setTokens.has(token)).length / hintTokens.length;
+    })
+  );
+
+  if (bestTokenRatio >= 0.75) {
+    return 25;
+  }
+
+  if (bestTokenRatio >= 0.5) {
+    return 15;
   }
 
   return 0;

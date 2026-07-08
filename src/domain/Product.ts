@@ -35,6 +35,7 @@ export interface ParsedCardIdentity {
   localId: string;
   localNumber: string;
   localPrefix: string;
+  expansionHints: string[];
   setTotal?: number;
 }
 

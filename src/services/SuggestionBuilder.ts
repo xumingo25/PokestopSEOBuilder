@@ -56,10 +56,10 @@ function buildSeoDescription(card: TcgDexCard): string {
 }
 
 function buildImprovedDescription(card: TcgDexCard): string {
-  const setUrl = card.set?.id ? 'https://www.tcgdex.net/en/sets/' + encodeURIComponent(card.set.id) : '';
   const setLabel = card.set?.name ?? card.set?.id ?? '';
+  const setUrl = buildPokestopSetUrl(setLabel);
   const setValue = setUrl
-    ? '<a href="' + setUrl + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(setLabel) + '</a>'
+    ? '<a href="' + setUrl + '">' + escapeHtml(setLabel) + '</a>'
     : escapeHtml(setLabel);
   const identityRows: Array<[string, string | undefined, boolean?]> = [
     ['Nombre', card.name],
@@ -95,10 +95,27 @@ function buildImprovedDescription(card: TcgDexCard): string {
     buildDefinitionList('Datos de la carta', identityRows),
     buildDefinitionList('Clasificacion', classificationRows),
     variantRows.length ? buildDefinitionList('Variantes disponibles', variantRows) : '',
-    buildDefinitionList('Legalidad', legalRows),
+    buildDefinitionList('Valido en formato Standard/Expanded', legalRows),
     attacks.length ? '<h3>Ataques</h3><ul>' + attacks.map((attack) => '<li><strong>' + escapeHtml(attack.name ?? 'Ataque') + ':</strong> ' + escapeHtml([attack.damage, attack.effect].filter(Boolean).join(' - ')) + '</li>').join('') + '</ul>' : '',
     '</section>'
   ].filter(Boolean).join('');
+}
+
+function buildPokestopSetUrl(setName: string): string {
+  const slug = slugifySetName(setName);
+
+  return slug ? 'https://pokestop.cl/singles/' + slug + '/' : '';
+}
+
+function slugifySetName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, ' ')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function buildDefinitionList(title: string, rows: Array<[string, string | undefined, boolean?]>): string {

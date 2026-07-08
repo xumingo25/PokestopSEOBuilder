@@ -12,7 +12,7 @@ import {
 } from '../services/SeoBuilder';
 
 const pageSize = 30;
-type PreviewFilter = 'all' | 'unmatched';
+type PreviewFilter = 'all' | 'unmatched' | 'needs_update';
 
 interface CatalogBuildResult {
   products: EnrichedProduct[];
@@ -86,9 +86,9 @@ export function createApp(root: HTMLElement): void {
         currentPage: 1,
         previewFilter: 'all',
         hasCompletedUnmatchedScan: false,
-        isLoading: false
+        isLoading: false,
+        apiMessage: 'Archivo cargado. Presiona Iniciar scanner para consultar TCGdex.'
       });
-      void scanAllProductsForUnmatched(catalog.products);
     } catch (error) {
       setState({
         isLoading: false,
@@ -111,6 +111,29 @@ export function createApp(root: HTMLElement): void {
     }
 
     setState({ updatedDescriptionIndexes: [...state.updatedDescriptionIndexes, sourceIndex] });
+  };
+
+  const confirmAmbiguousMatch = (sourceIndex: number) => {
+    const nextProducts = state.products.map((product) => {
+      if (product.sourceIndex !== sourceIndex || product.suggestion.match.status !== 'ambiguous') {
+        return product;
+      }
+
+      return withSuggestion(product, {
+        ...product.suggestion,
+        match: {
+          ...product.suggestion.match,
+          status: 'found',
+          confidence: 100,
+          reason: 'Coincidencia ambigua confirmada manualmente'
+        }
+      });
+    });
+
+    setState({
+      products: nextProducts,
+      apiMessage: 'Coincidencia confirmada manualmente.'
+    });
   };
 
   const generateSuggestionsForPage = async (page: number, sourceProducts = state.products) => {
@@ -285,29 +308,42 @@ export function createApp(root: HTMLElement): void {
   };
 
   const updateAllFoundProducts = () => {
+    const foundProducts = state.products.filter((product) => product.suggestion.match.status === 'found');
+    updateProductSet(foundProducts, 'No hay cartas encontradas para actualizar.');
+  };
+
+  const updateNeedsUpdateProducts = () => {
+    const needsUpdateProducts = getNeedsUpdateProducts(
+      state.products,
+      state.updatedSeoIndexes,
+      state.updatedDescriptionIndexes
+    );
+    updateProductSet(needsUpdateProducts, 'No hay productos por actualizar.');
+  };
+
+  const updateProductSet = (targetProducts: EnrichedProduct[], emptyMessage: string) => {
     if (!state.products.length || !state.importResult || state.isScanningUnmatched) {
       return;
     }
 
-    const foundProducts = state.products.filter((product) => product.suggestion.match.status === 'found');
     const nextSeoIndexes = mergeIndexes(
       state.updatedSeoIndexes,
-      foundProducts.filter(hasSeoSuggestionValues).map((product) => product.sourceIndex)
+      targetProducts.filter(hasSeoSuggestionValues).map((product) => product.sourceIndex)
     );
     const nextDescriptionIndexes = mergeIndexes(
       state.updatedDescriptionIndexes,
-      foundProducts.filter(hasDescriptionSuggestionValue).map((product) => product.sourceIndex)
+      targetProducts.filter(hasDescriptionSuggestionValue).map((product) => product.sourceIndex)
     );
 
-    if (!foundProducts.length) {
-      setState({ apiMessage: 'No hay cartas encontradas para actualizar.' });
+    if (!targetProducts.length) {
+      setState({ apiMessage: emptyMessage });
       return;
     }
 
     setState({
       updatedSeoIndexes: nextSeoIndexes,
       updatedDescriptionIndexes: nextDescriptionIndexes,
-      apiMessage: 'Actualizacion masiva lista. Productos encontrados actualizados: ' + foundProducts.length
+      apiMessage: 'Actualizacion masiva lista. Productos actualizados: ' + targetProducts.length
     });
     downloadExportCsv(nextSeoIndexes, nextDescriptionIndexes);
   };
@@ -345,24 +381,20 @@ export function createApp(root: HTMLElement): void {
   const goToPreviousPage = () => {
     const nextPage = Math.max(1, state.currentPage - 1);
     setState({ currentPage: nextPage });
-
-    if (state.previewFilter === 'all') {
-      void generateSuggestionsForPage(nextPage);
-    }
   };
 
   const goToNextPage = () => {
-    const totalPages = getTotalPages(getPreviewProducts(state.products, state.previewFilter).length);
+    const totalPages = getTotalPages(getPreviewProducts(state.products, state.previewFilter, state.updatedSeoIndexes, state.updatedDescriptionIndexes).length);
     const nextPage = Math.min(totalPages, state.currentPage + 1);
     setState({ currentPage: nextPage });
-
-    if (state.previewFilter === 'all') {
-      void generateSuggestionsForPage(nextPage);
-    }
   };
 
   const showUnmatchedProducts = () => {
     setState({ previewFilter: 'unmatched', currentPage: 1 });
+  };
+
+  const showNeedsUpdateProducts = () => {
+    setState({ previewFilter: 'needs_update', currentPage: 1 });
   };
 
   const showAllProducts = () => {
@@ -383,8 +415,11 @@ export function createApp(root: HTMLElement): void {
     root.querySelector<HTMLButtonElement>('#download-csv')?.addEventListener('click', downloadCsv);
     root.querySelector<HTMLButtonElement>('#download-unmatched')?.addEventListener('click', downloadUnmatchedCsv);
     root.querySelector<HTMLButtonElement>('#show-unmatched')?.addEventListener('click', showUnmatchedProducts);
+    root.querySelector<HTMLButtonElement>('#show-needs-update')?.addEventListener('click', showNeedsUpdateProducts);
     root.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', showAllProducts);
+    root.querySelector<HTMLButtonElement>('#start-scanner')?.addEventListener('click', () => { void scanAllProductsForUnmatched(); });
     root.querySelector<HTMLButtonElement>('#bulk-update-found')?.addEventListener('click', updateAllFoundProducts);
+    root.querySelector<HTMLButtonElement>('#bulk-update-needs')?.addEventListener('click', updateNeedsUpdateProducts);
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
     root.querySelector<HTMLButtonElement>('#preview-prev')?.addEventListener('click', goToPreviousPage);
     root.querySelector<HTMLButtonElement>('#preview-next')?.addEventListener('click', goToNextPage);
@@ -393,6 +428,9 @@ export function createApp(root: HTMLElement): void {
     });
     root.querySelectorAll<HTMLButtonElement>('[data-update-description]').forEach((button) => {
       button.addEventListener('click', () => updateProductDescription(Number(button.dataset.updateDescription)));
+    });
+    root.querySelectorAll<HTMLButtonElement>('[data-confirm-match]').forEach((button) => {
+      button.addEventListener('click', () => confirmAmbiguousMatch(Number(button.dataset.confirmMatch)));
     });
   };
 
@@ -404,7 +442,7 @@ function layout(state: AppState): string {
     '<div class="app-shell">',
     '<header class="topbar"><div class="topbar__content">',
     '<div class="brand"><h1 class="brand__name">Pokestop SEO Builder</h1><p class="brand__tagline">Generador local de columnas SEO para catalogos de Tienda Nube.</p></div>',
-    '<div class="status-pill">Sprint 3.5</div>',
+    '<div class="status-pill">Sprint 4</div>',
     '</div></header>',
     '<main class="workspace">',
     importSection(state),
@@ -417,27 +455,33 @@ function layout(state: AppState): string {
 
 function importSection(state: AppState): string {
   const hasProductsDisabled = state.products.length ? '' : 'disabled';
+  const scannerDisabled = state.products.length && !state.isScanningUnmatched && !state.isGeneratingSuggestions ? '' : 'disabled';
+  const resultActionsDisabled = state.products.length && state.hasCompletedUnmatchedScan ? '' : 'disabled';
   const bulkUpdateDisabled = state.products.length && state.hasCompletedUnmatchedScan && !state.isScanningUnmatched ? '' : 'disabled';
-  const unmatchedDisabled = state.products.length && state.hasCompletedUnmatchedScan ? '' : 'disabled';
   const loading = state.isLoading ? '<p class="muted">Procesando archivo...</p>' : '';
   const error = state.error ? '<div class="error-box">' + escapeHtml(state.error) + '</div>' : '';
 
   return [
     '<section class="panel">',
     '<div class="panel__header"><div><h2 class="panel__title">Importar catalogo</h2><p class="panel__hint">Carga un CSV o TSV exportado desde Tienda Nube.</p></div>',
-    '<div class="actions">',
+    '<div class="actions actions--file">',
     '<button class="button button--secondary" id="reset-app" type="button" ' + hasProductsDisabled + '>Limpiar</button>',
-    '<button class="button button--secondary" id="bulk-update-found" type="button" ' + bulkUpdateDisabled + '>Actualizar todos los encontrados</button>',
-    '<button class="button button--secondary" id="show-unmatched" type="button" ' + unmatchedDisabled + '>Mostrar no encontrados</button>',
-    '<button class="button button--secondary" id="show-all" type="button" ' + hasProductsDisabled + '>Mostrar todos</button>',
-    '<button class="button button--secondary" id="download-unmatched" type="button" ' + unmatchedDisabled + '>Descargar no encontrados</button>',
-    '<button class="button button--primary" id="download-csv" type="button" ' + hasProductsDisabled + '>Descargar CSV</button>',
+    '<button class="button button--primary" id="download-csv" type="button" ' + hasProductsDisabled + '>Descargar Excel</button>',
     '</div></div>',
     '<div class="panel__body"><label class="upload-zone" for="product-file">',
     '<strong>Selecciona el archivo de productos</strong>',
     '<span>El sistema detecta separador, encoding, columnas SEO actuales y descripciones HTML.</span>',
     '<input class="file-input" id="product-file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />',
-    '</label>' + loading + error + '</div></section>'
+    '</label>' + loading + error,
+    '<div class="result-actions" aria-label="Acciones sobre resultados">',
+    '<button class="button button--secondary" id="start-scanner" type="button" ' + scannerDisabled + '>Iniciar scanner</button>',
+    '<button class="button button--secondary" id="bulk-update-found" type="button" ' + bulkUpdateDisabled + '>Actualizar todos los encontrados</button>',
+    '<button class="button button--secondary" id="bulk-update-needs" type="button" ' + bulkUpdateDisabled + '>Actualizar por actualizar</button>',
+    '<button class="button button--secondary" id="show-needs-update" type="button" ' + resultActionsDisabled + '>Mostrar por actualizar</button>',
+    '<button class="button button--secondary" id="show-unmatched" type="button" ' + resultActionsDisabled + '>Mostrar no encontrados</button>',
+    '<button class="button button--secondary" id="show-all" type="button" ' + hasProductsDisabled + '>Mostrar todos</button>',
+    '<button class="button button--secondary" id="download-unmatched" type="button" ' + resultActionsDisabled + '>Descargar no encontrados</button>',
+    '</div></div></section>'
   ].join('');
 }
 
@@ -461,6 +505,7 @@ function summarySection(state: AppState): string {
     metric('Descripciones actualizadas', String(state.updatedDescriptionIndexes.length)),
     metric('API encontradas', String(state.products.filter((product) => product.suggestion.match.status === 'found').length)),
     metric('Consultadas API', String(state.products.filter((product) => product.suggestion.match.status !== 'pending').length)),
+    metric('Por actualizar', String(getNeedsUpdateProducts(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes).length)),
     metric('Por corregir', String(getUnmatchedProducts(state.products).length)),
     metric('Variantes omitidas', String(state.omittedVariantRows)),
     metric('Col. titulo SEO', detected?.seoTitle ?? 'No detectada'),
@@ -481,7 +526,7 @@ function previewSection(
     return '<section class="empty-state">Importa un archivo para ver la grilla comparativa.</section>';
   }
 
-  const previewProducts = getPreviewProducts(products, previewFilter);
+  const previewProducts = getPreviewProducts(products, previewFilter, updatedSeoIndexes, updatedDescriptionIndexes);
 
   if (!previewProducts.length) {
     return '<section class="empty-state">No hay productos para mostrar con el filtro actual.</section>';
@@ -515,22 +560,24 @@ function previewSection(
 function productRow(product: EnrichedProduct, isSeoUpdated: boolean, isDescriptionUpdated: boolean): string {
   const hasSeoSuggestion = hasSeoSuggestionValues(product);
   const hasDescriptionSuggestion = hasDescriptionSuggestionValue(product);
+  const isSeoReady = isSeoUpdated || isCurrentSeoReady(product);
+  const isDescriptionReady = isDescriptionUpdated || isCurrentDescriptionReady(product);
 
   return [
     '<tr>',
     '<td><div class="product-name">' + escapeHtml(product.name) + '</div><div class="muted">' + escapeHtml(product.sku || 'Sin SKU') + '</div></td>',
     '<td>' + apiBadge(product) + '</td>',
-    '<td>' + matchSummary(product) + '</td>',
+    '<td>' + matchSummary(product) + confirmMatchButton(product) + '</td>',
     '<td>' + valueOrEmpty(product.currentSeoTitle) + '</td>',
     '<td>' + valueOrEmpty(product.currentSeoDescription) + '</td>',
     '<td>' + valueOrEmpty(product.suggestion.suggestedSeoTitle) + '</td>',
     '<td>' + valueOrEmpty(product.suggestion.suggestedSeoDescription) + '</td>',
     '<td>' + htmlValueOrEmpty(product.currentDescription) + '</td>',
     '<td>' + htmlValueOrEmpty(product.suggestion.improvedDescriptionHtml) + '</td>',
-    '<td>' + statusBadge(isSeoUpdated, hasSeoSuggestion) + '</td>',
-    '<td>' + actionButton('seo', product.sourceIndex, isSeoUpdated, hasSeoSuggestion) + '</td>',
-    '<td>' + statusBadge(isDescriptionUpdated, hasDescriptionSuggestion) + '</td>',
-    '<td>' + actionButton('description', product.sourceIndex, isDescriptionUpdated, hasDescriptionSuggestion) + '</td>',
+    '<td>' + statusBadge(isSeoReady, hasSeoSuggestion) + '</td>',
+    '<td>' + actionButton('seo', product.sourceIndex, isSeoReady, hasSeoSuggestion) + '</td>',
+    '<td>' + statusBadge(isDescriptionReady, hasDescriptionSuggestion) + '</td>',
+    '<td>' + actionButton('description', product.sourceIndex, isDescriptionReady, hasDescriptionSuggestion) + '</td>',
     '</tr>'
   ].join('');
 }
@@ -573,6 +620,14 @@ function matchSummary(product: EnrichedProduct): string {
   return '<span class="muted">' + escapeHtml(match.reason || match.error || 'Sin resultado') + '</span>';
 }
 
+function confirmMatchButton(product: EnrichedProduct): string {
+  if (product.suggestion.match.status !== 'ambiguous') {
+    return '';
+  }
+
+  return '<button class="button button--primary button--small match-action" type="button" data-confirm-match="' + product.sourceIndex + '">Confirmar</button>';
+}
+
 function buildCatalog(importResult: ImportResult): CatalogBuildResult {
   const enrichedProducts = enrichProducts(importResult.rows, importResult.columnMap);
   const products = enrichedProducts.filter((product) => hasValidProductName(product.name));
@@ -581,29 +636,29 @@ function buildCatalog(importResult: ImportResult): CatalogBuildResult {
     products,
     omittedVariantRows: enrichedProducts.length - products.length,
     updatedSeoIndexes: products
-      .filter((product) => isUpdatedStatus(product.row['Estado SEO']))
+      .filter((product) => isReadyStatus(product.row['Estado SEO']) || isUpdatedStatus(product.row['Estado SEO']))
       .map((product) => product.sourceIndex),
     updatedDescriptionIndexes: products
-      .filter((product) => isUpdatedStatus(product.row['Estado Descripcion']) || isImprovedStatus(product.row['Estado Descripcion']))
+      .filter((product) => isReadyStatus(product.row['Estado Descripcion']) || isUpdatedStatus(product.row['Estado Descripcion']) || isImprovedStatus(product.row['Estado Descripcion']))
       .map((product) => product.sourceIndex)
   };
 }
 
-function statusBadge(isUpdated: boolean, hasSuggestion: boolean): string {
-  if (isUpdated) {
-    return '<span class="status-badge status-badge--done">Actualizado</span>';
+function statusBadge(isReady: boolean, hasSuggestion: boolean): string {
+  if (isReady) {
+    return '<span class="status-badge status-badge--done">Listo</span>';
   }
 
   if (!hasSuggestion) {
     return '<span class="status-badge status-badge--idle">Sin sugerencia</span>';
   }
 
-  return '<span class="status-badge">Pendiente</span>';
+  return '<span class="status-badge">Por actualizar</span>';
 }
 
-function actionButton(kind: 'seo' | 'description', sourceIndex: number, isUpdated: boolean, hasSuggestion: boolean): string {
-  if (isUpdated) {
-    return '<button class="button button--secondary button--small" type="button" disabled>Aplicado</button>';
+function actionButton(kind: 'seo' | 'description', sourceIndex: number, isReady: boolean, hasSuggestion: boolean): string {
+  if (isReady) {
+    return '<button class="button button--secondary button--small" type="button" disabled>Listo</button>';
   }
 
   if (!hasSuggestion) {
@@ -618,16 +673,78 @@ function actionButton(kind: 'seo' | 'description', sourceIndex: number, isUpdate
 }
 
 
+function isCurrentSeoReady(product: EnrichedProduct): boolean {
+  if (!hasSeoSuggestionValues(product)) {
+    return false;
+  }
+
+  return normalizeComparableValue(product.currentSeoTitle) === normalizeComparableValue(product.suggestion.suggestedSeoTitle)
+    && normalizeComparableValue(product.currentSeoDescription) === normalizeComparableValue(product.suggestion.suggestedSeoDescription);
+}
+
+function isCurrentDescriptionReady(product: EnrichedProduct): boolean {
+  if (!hasDescriptionSuggestionValue(product)) {
+    return false;
+  }
+
+  return normalizeComparableValue(product.currentDescription) === normalizeComparableValue(product.suggestion.improvedDescriptionHtml);
+}
+
+function normalizeComparableValue(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
 function mergeIndexes(currentIndexes: number[], newIndexes: number[]): number[] {
   return Array.from(new Set([...currentIndexes, ...newIndexes]));
 }
 
-function getPreviewProducts(products: EnrichedProduct[], previewFilter: PreviewFilter): EnrichedProduct[] {
-  return previewFilter === 'unmatched' ? getUnmatchedProducts(products) : products;
+function getPreviewProducts(
+  products: EnrichedProduct[],
+  previewFilter: PreviewFilter,
+  updatedSeoIndexes: number[] = [],
+  updatedDescriptionIndexes: number[] = []
+): EnrichedProduct[] {
+  if (previewFilter === 'unmatched') {
+    return getUnmatchedProducts(products);
+  }
+
+  if (previewFilter === 'needs_update') {
+    return getNeedsUpdateProducts(products, updatedSeoIndexes, updatedDescriptionIndexes);
+  }
+
+  return products;
 }
 
 function previewTitle(previewFilter: PreviewFilter): string {
-  return previewFilter === 'unmatched' ? 'Solo cartas no encontradas' : 'Todos los productos validos';
+  if (previewFilter === 'unmatched') {
+    return 'Solo cartas no encontradas';
+  }
+
+  if (previewFilter === 'needs_update') {
+    return 'Solo productos por actualizar';
+  }
+
+  return 'Todos los productos validos';
+}
+
+function getNeedsUpdateProducts(
+  products: EnrichedProduct[],
+  updatedSeoIndexes: number[] = [],
+  updatedDescriptionIndexes: number[] = []
+): EnrichedProduct[] {
+  const updatedSeoSet = new Set(updatedSeoIndexes);
+  const updatedDescriptionSet = new Set(updatedDescriptionIndexes);
+
+  return products.filter((product) => {
+    const hasSeoPending = hasSeoSuggestionValues(product)
+      && !updatedSeoSet.has(product.sourceIndex)
+      && !isCurrentSeoReady(product);
+    const hasDescriptionPending = hasDescriptionSuggestionValue(product)
+      && !updatedDescriptionSet.has(product.sourceIndex)
+      && !isCurrentDescriptionReady(product);
+
+    return product.suggestion.match.status === 'found' && (hasSeoPending || hasDescriptionPending);
+  });
 }
 
 function getUnmatchedProducts(products: EnrichedProduct[]): EnrichedProduct[] {
@@ -704,6 +821,10 @@ function hasValidProductName(name: string): boolean {
   const normalizedName = normalizeValue(name);
 
   return normalizedName.length > 0 && normalizedName !== 'producto sin nombre';
+}
+
+function isReadyStatus(value: string | undefined): boolean {
+  return normalizeValue(value ?? '') === 'listo';
 }
 
 function isUpdatedStatus(value: string | undefined): boolean {

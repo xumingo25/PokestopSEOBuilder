@@ -32,6 +32,7 @@ export function parseCardIdentity(productName: string): ParsedCardIdentity {
     localId: normalizeLocalId(rawLocalId),
     localNumber: localParts.number,
     localPrefix: localParts.prefix,
+    expansionHints: buildExpansionHints(localParts.prefix, productName),
     setTotal: totalNumber ? Number(totalNumber) : undefined
   };
 }
@@ -61,6 +62,62 @@ function extractLocalId(value: string): string {
   }
 
   return compactValue;
+}
+
+function buildExpansionHints(prefix: string, productName: string): string[] {
+  const normalizedName = normalizeCardName(productName);
+  const hintsByPrefix: Record<string, string[]> = {
+    gg: ['galarian gallery', 'sword shield', 'crown zenith', 'swsh'],
+    tg: ['trainer gallery', 'sword shield', 'brilliant stars', 'astral radiance', 'lost origin', 'silver tempest', 'swsh'],
+    svp: ['scarlet violet promo', 'scarlet violet promos', 'scarlet violet', 'svp'],
+    swsh: ['sword shield promo', 'sword shield promos', 'sword shield', 'swsh'],
+    mep: ['mega evolution promo', 'mega evolution promos', 'mega evolution', 'mep'],
+    sm: ['sun moon promo', 'sun moon promos', 'sun moon', 'sm'],
+    xy: ['xy promo', 'xy promos', 'xy'],
+    bw: ['black white promo', 'black white promos', 'black white', 'bw'],
+    dp: ['diamond pearl promo', 'diamond pearl promos', 'diamond pearl', 'dp'],
+    hgss: ['heartgold soulsilver promo', 'heartgold soulsilver promos', 'heartgold soulsilver', 'hgss']
+  };
+  const normalizedPrefix = prefix.toLowerCase();
+  const hints = [...(hintsByPrefix[normalizedPrefix] ?? [])];
+
+  if (normalizedName.includes('galarian gallery')) {
+    hints.push('galarian gallery', 'sword shield', 'crown zenith');
+  }
+
+  if (normalizedName.includes('trainer gallery')) {
+    hints.push('trainer gallery', 'sword shield');
+  }
+
+  if (normalizedName.includes('mega evolution')) {
+    hints.push('mega evolution promo', 'mega evolution');
+  }
+
+  if (normalizedName.includes('scarlet violet')) {
+    hints.push('scarlet violet promo', 'scarlet violet');
+  }
+
+  if (normalizedName.includes('sword shield')) {
+    hints.push('sword shield promo', 'sword shield');
+  }
+
+  if (normalizedName.includes('sun moon')) {
+    hints.push('sun moon promo', 'sun moon');
+  }
+
+  if (normalizedName.includes('black white')) {
+    hints.push('black white promo', 'black white');
+  }
+
+  if (normalizedName.includes('diamond pearl')) {
+    hints.push('diamond pearl promo', 'diamond pearl');
+  }
+
+  if (normalizedName.includes('heartgold soulsilver')) {
+    hints.push('heartgold soulsilver promo', 'heartgold soulsilver');
+  }
+
+  return Array.from(new Set(hints.map(normalizeCardName).filter(Boolean)));
 }
 
 export function parseLocalId(value: string): { prefix: string; number: string } {

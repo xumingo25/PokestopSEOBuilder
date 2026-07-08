@@ -5,15 +5,6 @@ import { buildEmptySuggestion } from './SuggestionBuilder';
 const fallbackSeoTitleColumn = 'Titulo SEO';
 const fallbackSeoDescriptionColumn = 'Descripcion SEO';
 const fallbackDescriptionColumn = 'Descripcion';
-const suggestedSeoTitleColumn = 'Titulo SEO Sugerido';
-const suggestedSeoDescriptionColumn = 'Descripcion SEO Sugerida';
-const improvedDescriptionColumn = 'Descripcion Mejorada';
-const seoStatusColumn = 'Estado SEO';
-const descriptionStatusColumn = 'Estado Descripcion';
-const tcgdexIdColumn = 'TCGdex ID';
-const tcgdexMatchColumn = 'TCGdex Match';
-const tcgdexConfidenceColumn = 'TCGdex Confianza';
-const tcgdexSetColumn = 'TCGdex Set';
 
 export function createProductInput(row: ProductRow, sourceIndex: number, columnMap: ColumnMap): ProductInput {
   const currentDescription = readMappedValue(row, columnMap.description);
@@ -67,22 +58,13 @@ export function toExportRows(
   return products.map((product) => {
     const hasSeoSuggestion = hasSeoSuggestionValues(product);
     const hasDescriptionSuggestion = hasDescriptionSuggestionValue(product);
-    const isSeoMarkedUpdated = updatedSeoSet.has(product.sourceIndex);
-    const isDescriptionMarkedUpdated = updatedDescriptionSet.has(product.sourceIndex);
+    const isSeoContentReady = isCurrentSeoReady(product);
+    const isDescriptionContentReady = isCurrentDescriptionReady(product);
+    const isSeoMarkedUpdated = updatedSeoSet.has(product.sourceIndex) || isSeoContentReady;
+    const isDescriptionMarkedUpdated = updatedDescriptionSet.has(product.sourceIndex) || isDescriptionContentReady;
     const isSeoUpdated = isSeoMarkedUpdated && hasSeoSuggestion;
     const isDescriptionUpdated = isDescriptionMarkedUpdated && hasDescriptionSuggestion;
-    const row: ProductRow = {
-      ...product.row,
-      [suggestedSeoTitleColumn]: product.suggestion.suggestedSeoTitle,
-      [suggestedSeoDescriptionColumn]: product.suggestion.suggestedSeoDescription,
-      [improvedDescriptionColumn]: product.suggestion.improvedDescriptionHtml,
-      [seoStatusColumn]: getExportStatus(isSeoMarkedUpdated, hasSeoSuggestion, 'Actualizado'),
-      [descriptionStatusColumn]: getExportStatus(isDescriptionMarkedUpdated, hasDescriptionSuggestion, 'Mejorado'),
-      [tcgdexIdColumn]: product.suggestion.match.tcgdexId,
-      [tcgdexMatchColumn]: product.suggestion.match.status,
-      [tcgdexConfidenceColumn]: product.suggestion.match.confidence ? String(product.suggestion.match.confidence) : '',
-      [tcgdexSetColumn]: product.suggestion.match.setName
-    };
+    const row: ProductRow = { ...product.row };
 
     if (isSeoUpdated) {
       row[seoTitleColumn] = product.suggestion.suggestedSeoTitle;
@@ -97,6 +79,27 @@ export function toExportRows(
   });
 }
 
+function isCurrentSeoReady(product: EnrichedProduct): boolean {
+  if (!hasSeoSuggestionValues(product)) {
+    return false;
+  }
+
+  return normalizeComparableValue(product.currentSeoTitle) === normalizeComparableValue(product.suggestion.suggestedSeoTitle)
+    && normalizeComparableValue(product.currentSeoDescription) === normalizeComparableValue(product.suggestion.suggestedSeoDescription);
+}
+
+function isCurrentDescriptionReady(product: EnrichedProduct): boolean {
+  if (!hasDescriptionSuggestionValue(product)) {
+    return false;
+  }
+
+  return normalizeComparableValue(product.currentDescription) === normalizeComparableValue(product.suggestion.improvedDescriptionHtml);
+}
+
+function normalizeComparableValue(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
 export function hasSeoSuggestionValues(product: EnrichedProduct): boolean {
   return Boolean(product.suggestion.suggestedSeoTitle || product.suggestion.suggestedSeoDescription);
 }
@@ -105,10 +108,3 @@ export function hasDescriptionSuggestionValue(product: EnrichedProduct): boolean
   return Boolean(product.suggestion.improvedDescriptionHtml);
 }
 
-function getExportStatus(isUpdated: boolean, hasSuggestion: boolean, updatedLabel: string): string {
-  if (isUpdated) {
-    return updatedLabel;
-  }
-
-  return hasSuggestion ? 'Pendiente' : 'Sin sugerencia';
-}

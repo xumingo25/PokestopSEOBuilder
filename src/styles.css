@@ -97,6 +97,15 @@ button { cursor: pointer; }
 .file-input { width: min(100%, 420px); }
 
 .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.actions--file { justify-content: flex-end; }
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #ece5d7;
+}
 
 .button {
   border: 1px solid transparent;
@@ -116,6 +125,7 @@ button { cursor: pointer; }
   font-size: 0.82rem;
   white-space: nowrap;
 }
+.match-action { margin-top: 8px; }
 
 .seo-grid {
   table-layout: fixed;
