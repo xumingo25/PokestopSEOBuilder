@@ -26,6 +26,7 @@ export interface TcgDexCard {
   types?: string[];
   supertype?: string;
   subtypes?: string[];
+  trainerType?: string;
   description?: string;
   stage?: string;
   dexId?: number[];

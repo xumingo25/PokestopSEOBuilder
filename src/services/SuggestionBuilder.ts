@@ -116,7 +116,7 @@ function buildSupertypeValue(card: TcgDexCard): string {
 
 function buildSubtypeValue(card: TcgDexCard): string {
   const subtypes = card.subtypes ?? [];
-  const normalizedSubtypes = subtypes.map(normalizeText);
+  const normalizedSubtypes = getNormalizedTrainerMarkers(card);
 
   if (!isTrainerCard(card, normalizedSubtypes)) {
     return escapeHtml(subtypes.join(', '));
@@ -125,7 +125,7 @@ function buildSubtypeValue(card: TcgDexCard): string {
   const trainerCategory = findTrainerCategory(normalizedSubtypes, card);
 
   if (!trainerCategory) {
-    return escapeHtml(subtypes.join(', '));
+    return escapeHtml(getVisibleSubtypeText(card));
   }
 
   return buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/trainers/' + trainerCategory.slug + '/', trainerCategory.label);
@@ -221,8 +221,8 @@ function buildRarityCategory(card: TcgDexCard): string {
 
 function buildCardTypeCategories(card: TcgDexCard): string[] {
   const supertype = normalizeText(card.supertype || card.category || '');
-  const subtypes = card.subtypes ?? [];
-  const normalizedSubtypes = subtypes.map(normalizeText);
+  const normalizedSubtypes = (card.subtypes ?? []).map(normalizeText);
+  const normalizedTrainerMarkers = getNormalizedTrainerMarkers(card);
   const categories: string[] = [];
   const supertypeCategory = findSupertypeCategory(card);
 
@@ -238,8 +238,8 @@ function buildCardTypeCategories(card: TcgDexCard): string[] {
     }
     categories.push(...buildPokemonTypeCategories(card));
     categories.push(...buildPokemonStageCategories(card));
-  } else if (isTrainerCard(card, normalizedSubtypes)) {
-    const trainerCategory = findTrainerCategory(normalizedSubtypes, card);
+  } else if (isTrainerCard(card, normalizedTrainerMarkers)) {
+    const trainerCategory = findTrainerCategory(normalizedTrainerMarkers, card);
     categories.push('Singles > Tipo de Carta > Trainers' + (trainerCategory ? ' > ' + trainerCategory.label : ''));
   } else if (supertype.includes('energy') || normalizedSubtypes.includes('energy')) {
     categories.push('Singles > Tipo de Carta > Energias');
@@ -308,16 +308,9 @@ function inferEditionName(card: TcgDexCard): string {
 }
 
 function isPromoCard(card: TcgDexCard): boolean {
-  const values = [
-    card.localId,
-    card.id,
-    card.set?.id,
-    card.set?.name,
-    card.set?.serie?.name,
-    card.rarity
-  ].map((value) => normalizeText(value ?? ''));
+  const setName = normalizeText(card.set?.name ?? '');
 
-  return values.some((value) => value.includes('promo') || /^(svp|mep|swsh|sm|xy|bw)\d+/.test(value));
+  return setName.includes('promos');
 }
 
 function normalizeKnownRarity(value: string): string {
@@ -461,8 +454,22 @@ function findTrainerCategory(normalizedSubtypes: string[], card?: TcgDexCard): {
   return undefined;
 }
 
+function getNormalizedTrainerMarkers(card: TcgDexCard): string[] {
+  return [
+    ...(card.subtypes ?? []),
+    card.trainerType ?? ''
+  ].map(normalizeText).filter(Boolean);
+}
+
+function getVisibleSubtypeText(card: TcgDexCard): string {
+  return [
+    ...(card.subtypes ?? []),
+    card.trainerType ?? ''
+  ].filter(Boolean).join(', ');
+}
+
 function getRaritySlug(rarity: string, card: TcgDexCard): string {
-  if (isPromoCard(card) || normalizeText(rarity) === 'promo') {
+  if (isPromoCard(card)) {
     return 'promos';
   }
 
