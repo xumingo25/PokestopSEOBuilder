@@ -41,6 +41,12 @@ export default async function handler(request: any, response: any): Promise<void
 }
 
 function resolveUpstreamPath(request: any, requestUrl: URL): string {
+  const pathFromUrl = requestUrl.pathname.replace(/^\/api\/tcgdex/, '');
+
+  if (pathFromUrl && pathFromUrl !== '/') {
+    return pathFromUrl;
+  }
+
   const queryPath = request.query?.path ?? request.query?.['...path'];
 
   if (Array.isArray(queryPath) && queryPath.length > 0) {
@@ -51,7 +57,7 @@ function resolveUpstreamPath(request: any, requestUrl: URL): string {
     return '/' + queryPath.split('/').filter(Boolean).map(encodeURIComponent).join('/');
   }
 
-  return requestUrl.pathname.replace(/^\/api\/tcgdex/, '') || '/cards';
+  return '/cards';
 }
 
 function buildUpstreamSearch(requestUrl: URL): string {

@@ -50,8 +50,12 @@ export async function findBestCardMatch(product: EnrichedProduct): Promise<{ mat
   const best = rankedCards[0];
 
   if (!best || best.score < 70) {
+    const bestReason = best
+      ? 'Ningun candidato supero el umbral de confianza. Mejor candidato: ' + best.card.name + ' [' + best.card.localId + '] con ' + Math.round(best.score) + '%'
+      : 'Ningun candidato supero el umbral de confianza. No fue posible cargar el detalle de los candidatos';
+
     return {
-      match: createMatch('not_found', best?.score ?? 0, 'Ningun candidato supero el umbral de confianza')
+      match: createMatch('not_found', best?.score ?? 0, bestReason, best?.card)
     };
   }
 
