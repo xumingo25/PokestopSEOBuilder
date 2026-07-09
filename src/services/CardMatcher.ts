@@ -94,7 +94,7 @@ function buildProductIdentity(product: EnrichedProduct): ParsedCardIdentity {
     product.tags
   ].filter(Boolean).join(' '));
 
-  if (!productText.includes('celebrations')) {
+  if (!hasCelebrationsSignal(productText)) {
     return identity;
   }
 
@@ -103,8 +103,10 @@ function buildProductIdentity(product: EnrichedProduct): ParsedCardIdentity {
     expansionHints: Array.from(new Set([
       ...identity.expansionHints,
       'celebrations',
+      'classic collection',
       'sword shield',
-      'swsh'
+      'swsh',
+      'cel25'
     ]))
   };
 }
@@ -187,7 +189,7 @@ function scoreLocalId(cardLocalId: string, identity: ParsedCardIdentity): number
 }
 
 function scoreCelebrationsSet(card: TcgDexCard, identity: ParsedCardIdentity): number {
-  if (!identity.expansionHints.includes('celebrations')) {
+  if (!hasCelebrationsHint(identity)) {
     return 0;
   }
 
@@ -197,11 +199,19 @@ function scoreCelebrationsSet(card: TcgDexCard, identity: ParsedCardIdentity): n
     card.set?.serie?.name ?? ''
   ].join(' '));
 
-  return setText.includes('celebrations') ? 80 : -120;
+  if (card.id.startsWith('cel25-') || setText.includes('cel25') || setText.includes('celebrations')) {
+    return normalizeCardName(card.rarity ?? '').includes('classic collection') ? 170 : 150;
+  }
+
+  return -220;
 }
 
 function scoreSetTotal(card: TcgDexCard, identity: ParsedCardIdentity): number {
   if (!identity.setTotal) {
+    return 0;
+  }
+
+  if (hasCelebrationsHint(identity)) {
     return 0;
   }
 
@@ -214,6 +224,18 @@ function scoreSetTotal(card: TcgDexCard, identity: ParsedCardIdentity): number {
   }
 
   return 0;
+}
+
+function hasCelebrationsHint(identity: ParsedCardIdentity): boolean {
+  return identity.expansionHints.some((hint) => hasCelebrationsSignal(hint));
+}
+
+function hasCelebrationsSignal(value: string): boolean {
+  return value.includes('celebrations')
+    || value.includes('celebration')
+    || value.includes('classic collection')
+    || value.includes('cel25')
+    || value.split(' ').includes('ccc');
 }
 
 function isBeyondOfficialCount(card: TcgDexCard): boolean {

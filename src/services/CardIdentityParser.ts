@@ -55,7 +55,7 @@ export function normalizeLocalId(value: string): string {
 
 function extractLocalId(value: string): string {
   const compactValue = normalizeLocalId(value);
-  const directMatch = compactValue.match(/[a-z]*\d+[a-z]*/);
+  const directMatch = compactValue.match(/[a-z]*\d+[a-z0-9]*/);
 
   if (directMatch) {
     return directMatch[0];
@@ -67,6 +67,8 @@ function extractLocalId(value: string): string {
 function buildExpansionHints(prefix: string, productName: string): string[] {
   const normalizedName = normalizeCardName(productName);
   const hintsByPrefix: Record<string, string[]> = {
+    cel: ['celebrations', 'classic collection', 'sword shield', 'cel25'],
+    cel25: ['celebrations', 'classic collection', 'sword shield', 'cel25'],
     gg: ['galarian gallery', 'sword shield', 'crown zenith', 'swsh'],
     tg: ['trainer gallery', 'sword shield', 'brilliant stars', 'astral radiance', 'lost origin', 'silver tempest', 'swsh'],
     svp: ['scarlet violet promo', 'scarlet violet promos', 'scarlet violet', 'svp'],
@@ -87,6 +89,10 @@ function buildExpansionHints(prefix: string, productName: string): string[] {
 
   if (normalizedName.includes('trainer gallery')) {
     hints.push('trainer gallery', 'sword shield');
+  }
+
+  if (hasCelebrationsSignal(normalizedName)) {
+    hints.push('celebrations', 'classic collection', 'sword shield', 'cel25');
   }
 
   if (normalizedName.includes('mega evolution')) {
@@ -122,7 +128,7 @@ function buildExpansionHints(prefix: string, productName: string): string[] {
 
 export function parseLocalId(value: string): { prefix: string; number: string } {
   const normalized = normalizeLocalId(value);
-  const match = normalized.match(/^([a-z]*)(\d+)([a-z]*)$/);
+  const match = normalized.match(/^([a-z]*)(\d+)([a-z0-9]*)$/);
 
   if (!match) {
     return { prefix: '', number: normalized.replace(/^0+/, '') };
@@ -132,6 +138,14 @@ export function parseLocalId(value: string): { prefix: string; number: string } 
     prefix: match[1] + match[3],
     number: match[2].replace(/^0+/, '') || '0'
   };
+}
+
+function hasCelebrationsSignal(value: string): boolean {
+  return value.includes('celebrations')
+    || value.includes('celebration')
+    || value.includes('classic collection')
+    || value.includes('cel25')
+    || value.split(' ').includes('ccc');
 }
 
 export function tokenizeCardName(value: string): string[] {

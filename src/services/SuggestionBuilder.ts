@@ -110,7 +110,7 @@ function buildSupertypeValue(card: TcgDexCard): string {
   const category = findSupertypeCategory(card);
 
   return category
-    ? buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/' + category.slug + '/', label || category.label)
+    ? buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/' + category.slug + '/', category.displayLabel)
     : escapeHtml(label);
 }
 
@@ -417,19 +417,19 @@ function isPokemonCard(card: TcgDexCard): boolean {
   return supertype.includes('pokemon');
 }
 
-function findSupertypeCategory(card: TcgDexCard): { label: string; slug: string } | undefined {
+function findSupertypeCategory(card: TcgDexCard): { label: string; displayLabel: string; slug: string } | undefined {
   const supertype = normalizeText(card.supertype || card.category || '');
 
   if (supertype.includes('pokemon')) {
-    return { label: 'Pokemon', slug: 'pokemon' };
+    return { label: 'Pokemon', displayLabel: 'Pokémon', slug: 'pokemon' };
   }
 
   if (supertype.includes('trainer')) {
-    return { label: 'Trainers', slug: 'trainers' };
+    return { label: 'Trainers', displayLabel: 'Trainer', slug: 'trainers' };
   }
 
   if (supertype.includes('energy')) {
-    return { label: 'Energias', slug: 'energias' };
+    return { label: 'Energias', displayLabel: 'Energy', slug: 'energias' };
   }
 
   return undefined;
