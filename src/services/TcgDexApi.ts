@@ -101,7 +101,7 @@ export async function getCard(cardId: string): Promise<TcgDexCard> {
     return cached;
   }
 
-  const response = await fetch(apiBaseUrl + '/cards/' + encodeURIComponent(cardId));
+  const response = await fetch(apiBaseUrl + '/cards/' + encodePathSegment(cardId));
 
   if (!response.ok) {
     throw new Error('TCGdex no encontro la carta ' + cardId + '.');
@@ -140,7 +140,7 @@ async function getSet(setId: string): Promise<TcgDexSet> {
     return cached;
   }
 
-  const response = await fetch(apiBaseUrl + '/sets/' + encodeURIComponent(setId));
+  const response = await fetch(apiBaseUrl + '/sets/' + encodePathSegment(setId));
 
   if (!response.ok) {
     throw new Error('TCGdex no encontro la expansion ' + setId + '.');
@@ -149,4 +149,12 @@ async function getSet(setId: string): Promise<TcgDexSet> {
   const set = await response.json() as TcgDexSet;
   setDetailCache.set(setId, set);
   return set;
+}
+
+function encodePathSegment(value: string): string {
+  try {
+    return encodeURIComponent(decodeURIComponent(value));
+  } catch {
+    return encodeURIComponent(value);
+  }
 }
