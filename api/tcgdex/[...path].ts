@@ -16,7 +16,7 @@ export default async function handler(request: any, response: any): Promise<void
   try {
     const requestUrl = new URL(request.url ?? '', 'https://proxy.local');
     const upstreamPath = resolveUpstreamPath(request, requestUrl);
-    const upstreamUrl = upstreamBaseUrl + upstreamPath + requestUrl.search;
+    const upstreamUrl = upstreamBaseUrl + upstreamPath + buildUpstreamSearch(requestUrl);
     const upstreamResponse = await fetch(upstreamUrl, {
       headers: {
         accept: 'application/json',
@@ -41,17 +41,27 @@ export default async function handler(request: any, response: any): Promise<void
 }
 
 function resolveUpstreamPath(request: any, requestUrl: URL): string {
-  const queryPath = request.query?.path;
+  const queryPath = request.query?.path ?? request.query?.['...path'];
 
   if (Array.isArray(queryPath) && queryPath.length > 0) {
     return '/' + queryPath.map(encodeURIComponent).join('/');
   }
 
   if (typeof queryPath === 'string' && queryPath.trim()) {
-    return '/' + encodeURIComponent(queryPath.trim());
+    return '/' + queryPath.split('/').filter(Boolean).map(encodeURIComponent).join('/');
   }
 
   return requestUrl.pathname.replace(/^\/api\/tcgdex/, '') || '/cards';
+}
+
+function buildUpstreamSearch(requestUrl: URL): string {
+  const params = new URLSearchParams(requestUrl.searchParams);
+  params.delete('debug');
+  params.delete('path');
+  params.delete('...path');
+
+  const search = params.toString();
+  return search ? '?' + search : '';
 }
 
 function shouldCache(body: string): boolean {
