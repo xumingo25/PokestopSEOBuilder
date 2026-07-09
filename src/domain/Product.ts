@@ -54,6 +54,7 @@ export interface ProductSuggestion {
   suggestedSeoTitle: string;
   suggestedSeoDescription: string;
   improvedDescriptionHtml: string;
+  suggestedCategories: string[];
   focusKeyword: string;
   match: CardMatch;
 }

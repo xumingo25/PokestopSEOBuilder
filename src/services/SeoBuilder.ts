@@ -5,6 +5,7 @@ import { buildEmptySuggestion } from './SuggestionBuilder';
 const fallbackSeoTitleColumn = 'Titulo SEO';
 const fallbackSeoDescriptionColumn = 'Descripcion SEO';
 const fallbackDescriptionColumn = 'Descripcion';
+const fallbackCategoryColumn = 'Categoria';
 
 export function createProductInput(row: ProductRow, sourceIndex: number, columnMap: ColumnMap): ProductInput {
   const currentDescription = readMappedValue(row, columnMap.description);
@@ -47,23 +48,30 @@ export function toExportRows(
   products: EnrichedProduct[],
   updatedSeoIndexes: number[],
   updatedDescriptionIndexes: number[],
+  updatedCategoryIndexes: number[],
   columnMap: ColumnMap
 ): ProductRow[] {
   const updatedSeoSet = new Set(updatedSeoIndexes);
   const updatedDescriptionSet = new Set(updatedDescriptionIndexes);
+  const updatedCategorySet = new Set(updatedCategoryIndexes);
   const seoTitleColumn = columnMap.seoTitle ?? fallbackSeoTitleColumn;
   const seoDescriptionColumn = columnMap.seoDescription ?? fallbackSeoDescriptionColumn;
   const descriptionColumn = columnMap.description ?? fallbackDescriptionColumn;
+  const categoryColumn = columnMap.category ?? fallbackCategoryColumn;
 
   return products.map((product) => {
     const hasSeoSuggestion = hasSeoSuggestionValues(product);
     const hasDescriptionSuggestion = hasDescriptionSuggestionValue(product);
+    const hasCategorySuggestion = hasCategorySuggestionValue(product);
     const isSeoContentReady = isCurrentSeoReady(product);
     const isDescriptionContentReady = isCurrentDescriptionReady(product);
+    const isCategoryContentReady = isCurrentCategoryReady(product);
     const isSeoMarkedUpdated = updatedSeoSet.has(product.sourceIndex) || isSeoContentReady;
     const isDescriptionMarkedUpdated = updatedDescriptionSet.has(product.sourceIndex) || isDescriptionContentReady;
+    const isCategoryMarkedUpdated = updatedCategorySet.has(product.sourceIndex) || isCategoryContentReady;
     const isSeoUpdated = isSeoMarkedUpdated && hasSeoSuggestion;
     const isDescriptionUpdated = isDescriptionMarkedUpdated && hasDescriptionSuggestion;
+    const isCategoryUpdated = isCategoryMarkedUpdated && hasCategorySuggestion;
     const row: ProductRow = { ...product.row };
 
     if (isSeoUpdated) {
@@ -73,6 +81,10 @@ export function toExportRows(
 
     if (isDescriptionUpdated) {
       row[descriptionColumn] = product.suggestion.improvedDescriptionHtml;
+    }
+
+    if (isCategoryUpdated) {
+      row[categoryColumn] = product.suggestion.suggestedCategories.join(', ');
     }
 
     return row;
@@ -96,8 +108,28 @@ function isCurrentDescriptionReady(product: EnrichedProduct): boolean {
   return normalizeComparableValue(product.currentDescription) === normalizeComparableValue(product.suggestion.improvedDescriptionHtml);
 }
 
+function isCurrentCategoryReady(product: EnrichedProduct): boolean {
+  if (!hasCategorySuggestionValue(product)) {
+    return false;
+  }
+
+  const currentCategories = normalizeCategoryValues(product.category);
+  const suggestedCategories = normalizeCategoryValues(product.suggestion.suggestedCategories.join(','));
+
+  return currentCategories.length === suggestedCategories.length
+    && currentCategories.every((category, index) => category === suggestedCategories[index]);
+}
+
 function normalizeComparableValue(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeCategoryValues(value: string): string[] {
+  return value
+    .split(/[,;\n]+/)
+    .map((category) => normalizeComparableValue(category).toLowerCase())
+    .filter(Boolean)
+    .sort();
 }
 
 export function hasSeoSuggestionValues(product: EnrichedProduct): boolean {
@@ -108,3 +140,6 @@ export function hasDescriptionSuggestionValue(product: EnrichedProduct): boolean
   return Boolean(product.suggestion.improvedDescriptionHtml);
 }
 
+export function hasCategorySuggestionValue(product: EnrichedProduct): boolean {
+  return product.suggestion.suggestedCategories.length > 0;
+}

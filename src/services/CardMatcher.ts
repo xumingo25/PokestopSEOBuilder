@@ -14,7 +14,7 @@ interface RankedCard {
 }
 
 export async function findBestCardMatch(product: EnrichedProduct): Promise<{ match: CardMatch; card?: TcgDexCard }> {
-  const identity = parseCardIdentity(product.name);
+  const identity = buildProductIdentity(product);
 
   if (!identity.normalizedName && !identity.localId) {
     return {
@@ -82,6 +82,29 @@ function scoreBrief(card: TcgDexCardBrief, identity: ParsedCardIdentity): number
   return localIdScore + nameScore;
 }
 
+function buildProductIdentity(product: EnrichedProduct): ParsedCardIdentity {
+  const identity = parseCardIdentity(product.name);
+  const productText = normalizeCardName([
+    product.name,
+    product.category,
+    product.tags
+  ].filter(Boolean).join(' '));
+
+  if (!productText.includes('celebrations')) {
+    return identity;
+  }
+
+  return {
+    ...identity,
+    expansionHints: Array.from(new Set([
+      ...identity.expansionHints,
+      'celebrations',
+      'sword shield',
+      'swsh'
+    ]))
+  };
+}
+
 function scoreDetailedCard(card: TcgDexCard, brief: RankedBrief, identity: ParsedCardIdentity): RankedCard {
   const reasons: string[] = [];
   let score = brief.score;
@@ -108,6 +131,13 @@ function scoreDetailedCard(card: TcgDexCard, brief: RankedBrief, identity: Parse
     reasons.push('nombre debil');
   } else if (nameScore >= 45) {
     reasons.push('nombre coincide');
+  }
+
+  const celebrationsScore = scoreCelebrationsSet(card, identity);
+
+  if (celebrationsScore) {
+    score += celebrationsScore;
+    reasons.push(celebrationsScore > 0 ? 'celebrations coincide' : 'celebrations no coincide');
   }
 
   const setTotalScore = scoreSetTotal(card, identity);
@@ -150,6 +180,20 @@ function scoreLocalId(cardLocalId: string, identity: ParsedCardIdentity): number
   }
 
   return 0;
+}
+
+function scoreCelebrationsSet(card: TcgDexCard, identity: ParsedCardIdentity): number {
+  if (!identity.expansionHints.includes('celebrations')) {
+    return 0;
+  }
+
+  const setText = normalizeCardName([
+    card.set?.id ?? '',
+    card.set?.name ?? '',
+    card.set?.serie?.name ?? ''
+  ].join(' '));
+
+  return setText.includes('celebrations') ? 80 : -120;
 }
 
 function scoreSetTotal(card: TcgDexCard, identity: ParsedCardIdentity): number {

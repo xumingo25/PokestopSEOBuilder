@@ -115,26 +115,33 @@ function scoreDecodedText(text: string): number {
   return replacementCharacters * 100 + mojibakeSignals * 25 - likelySpanishChars;
 }
 
-function escapeCell(value: string): string {
+function escapeCell(value: string, delimiter: ',' | ';' | '\t'): string {
   const normalized = value.replace(/\r?\n/g, ' ').trim();
 
-  if (/[",;\n]/.test(normalized)) {
-    return `"${normalized.replace(/"/g, '""')}"`;
+  if (shouldQuoteCell(normalized, delimiter)) {
+    return '"' + normalized.replace(/"/g, '""') + '"';
   }
 
   return normalized;
 }
 
-export function toCsv(rows: ProductRow[]): string {
+function shouldQuoteCell(value: string, delimiter: ',' | ';' | '\t'): boolean {
+  return value.includes('"')
+    || value.includes('\n')
+    || value.includes('\r')
+    || value.includes(delimiter);
+}
+
+export function toCsv(rows: ProductRow[], delimiter: ',' | ';' | '\t' = ','): string {
   const headers = Array.from(rows.reduce<Set<string>>((set, row) => {
     Object.keys(row).forEach((key) => set.add(key));
     return set;
   }, new Set<string>()));
 
-  const lines = [headers.map(escapeCell).join(',')];
+  const lines = [headers.map((header) => escapeCell(header, delimiter)).join(delimiter)];
 
   rows.forEach((row) => {
-    lines.push(headers.map((header) => escapeCell(row[header] ?? '')).join(','));
+    lines.push(headers.map((header) => escapeCell(row[header] ?? '', delimiter)).join(delimiter));
   });
 
   return lines.join('\n');

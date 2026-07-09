@@ -5,6 +5,15 @@ export interface TcgDexCardBrief {
   image?: string;
 }
 
+export interface TcgDexSet {
+  id: string;
+  name: string;
+  serie?: {
+    id?: string;
+    name?: string;
+  };
+}
+
 export interface TcgDexCard {
   id: string;
   localId: string;
@@ -26,6 +35,10 @@ export interface TcgDexCard {
   set?: {
     id: string;
     name: string;
+    serie?: {
+      id?: string;
+      name?: string;
+    };
     logo?: string;
     symbol?: string;
     cardCount?: {
@@ -40,9 +53,31 @@ export interface TcgDexCard {
   }>;
 }
 
-const apiBaseUrl = 'https://api.tcgdex.net/v2/en';
+const directApiBaseUrl = 'https://api.tcgdex.net/v2/en';
+const proxyApiBaseUrl = '/api/tcgdex';
+const apiBaseUrl = resolveApiBaseUrl();
+
+function resolveApiBaseUrl(): string {
+  const env = (import.meta as ImportMeta & { env?: { VITE_TCGDEX_API_BASE_URL?: string } }).env;
+  const configuredUrl = env?.VITE_TCGDEX_API_BASE_URL?.trim();
+
+  if (configuredUrl) {
+    return trimTrailingSlash(configuredUrl);
+  }
+
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)) {
+    return directApiBaseUrl;
+  }
+
+  return proxyApiBaseUrl;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/g, '');
+}
 let cardsCache: TcgDexCardBrief[] | undefined;
 const cardDetailCache = new Map<string, TcgDexCard>();
+const setDetailCache = new Map<string, TcgDexSet>();
 
 export async function listCards(): Promise<TcgDexCardBrief[]> {
   if (cardsCache) {
@@ -73,6 +108,45 @@ export async function getCard(cardId: string): Promise<TcgDexCard> {
   }
 
   const card = await response.json() as TcgDexCard;
-  cardDetailCache.set(cardId, card);
-  return card;
+  const enrichedCard = await enrichCardSetSerie(card);
+  cardDetailCache.set(cardId, enrichedCard);
+  return enrichedCard;
+}
+
+async function enrichCardSetSerie(card: TcgDexCard): Promise<TcgDexCard> {
+  if (!card.set?.id || card.set.serie?.name) {
+    return card;
+  }
+
+  try {
+    const set = await getSet(card.set.id);
+
+    return {
+      ...card,
+      set: {
+        ...card.set,
+        serie: set.serie
+      }
+    };
+  } catch {
+    return card;
+  }
+}
+
+async function getSet(setId: string): Promise<TcgDexSet> {
+  const cached = setDetailCache.get(setId);
+
+  if (cached) {
+    return cached;
+  }
+
+  const response = await fetch(apiBaseUrl + '/sets/' + encodeURIComponent(setId));
+
+  if (!response.ok) {
+    throw new Error('TCGdex no encontro la expansion ' + setId + '.');
+  }
+
+  const set = await response.json() as TcgDexSet;
+  setDetailCache.set(setId, set);
+  return set;
 }

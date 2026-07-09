@@ -5,6 +5,7 @@ import { findBestCardMatch } from '../services/CardMatcher';
 import { buildSuggestionFromCard, buildSuggestionFromMatch } from '../services/SuggestionBuilder';
 import {
   enrichProducts,
+  hasCategorySuggestionValue,
   hasDescriptionSuggestionValue,
   hasSeoSuggestionValues,
   toExportRows,
@@ -19,6 +20,7 @@ interface CatalogBuildResult {
   omittedVariantRows: number;
   updatedSeoIndexes: number[];
   updatedDescriptionIndexes: number[];
+  updatedCategoryIndexes: number[];
 }
 
 interface AppState {
@@ -26,6 +28,7 @@ interface AppState {
   products: EnrichedProduct[];
   updatedSeoIndexes: number[];
   updatedDescriptionIndexes: number[];
+  updatedCategoryIndexes: number[];
   omittedVariantRows: number;
   currentPage: number;
   previewFilter: PreviewFilter;
@@ -41,6 +44,7 @@ const initialState: AppState = {
   products: [],
   updatedSeoIndexes: [],
   updatedDescriptionIndexes: [],
+  updatedCategoryIndexes: [],
   omittedVariantRows: 0,
   currentPage: 1,
   previewFilter: 'all',
@@ -69,6 +73,7 @@ export function createApp(root: HTMLElement): void {
       currentPage: 1,
       updatedSeoIndexes: [],
       updatedDescriptionIndexes: [],
+      updatedCategoryIndexes: [],
       apiMessage: undefined,
       previewFilter: 'all',
       hasCompletedUnmatchedScan: false,
@@ -83,6 +88,7 @@ export function createApp(root: HTMLElement): void {
         ...catalog,
         updatedSeoIndexes: catalog.updatedSeoIndexes,
         updatedDescriptionIndexes: catalog.updatedDescriptionIndexes,
+        updatedCategoryIndexes: catalog.updatedCategoryIndexes,
         currentPage: 1,
         previewFilter: 'all',
         hasCompletedUnmatchedScan: false,
@@ -112,6 +118,7 @@ export function createApp(root: HTMLElement): void {
 
     setState({ updatedDescriptionIndexes: [...state.updatedDescriptionIndexes, sourceIndex] });
   };
+
 
   const confirmAmbiguousMatch = (sourceIndex: number) => {
     const nextProducts = state.products.map((product) => {
@@ -180,6 +187,7 @@ export function createApp(root: HTMLElement): void {
           : buildSuggestionFromMatch(result.match, product);
         nextProducts[index] = withSuggestion(product, suggestion);
       } catch (error) {
+        const errorMessage = getErrorMessage(error);
         nextProducts[index] = withSuggestion(product, buildSuggestionFromMatch({
           status: 'error',
           tcgdexId: '',
@@ -187,8 +195,8 @@ export function createApp(root: HTMLElement): void {
           setName: '',
           localId: '',
           confidence: 0,
-          reason: 'Error consultando TCGdex',
-          error: error instanceof Error ? error.message : 'Error desconocido'
+          reason: 'Error consultando TCGdex: ' + errorMessage,
+          error: errorMessage
         }, product));
       }
 
@@ -253,6 +261,7 @@ export function createApp(root: HTMLElement): void {
           : buildSuggestionFromMatch(result.match, product);
         nextProducts[index] = withSuggestion(product, suggestion);
       } catch (error) {
+        const errorMessage = getErrorMessage(error);
         nextProducts[index] = withSuggestion(product, buildSuggestionFromMatch({
           status: 'error',
           tcgdexId: '',
@@ -260,8 +269,8 @@ export function createApp(root: HTMLElement): void {
           setName: '',
           localId: '',
           confidence: 0,
-          reason: 'Error consultando TCGdex',
-          error: error instanceof Error ? error.message : 'Error desconocido'
+          reason: 'Error consultando TCGdex: ' + errorMessage,
+          error: errorMessage
         }, product));
       }
 
@@ -282,10 +291,10 @@ export function createApp(root: HTMLElement): void {
   };
 
   const downloadCsv = () => {
-    downloadExportCsv(state.updatedSeoIndexes, state.updatedDescriptionIndexes);
+    downloadExportCsv(state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.updatedCategoryIndexes);
   };
 
-  const downloadExportCsv = (updatedSeoIndexes: number[], updatedDescriptionIndexes: number[]) => {
+  const downloadExportCsv = (updatedSeoIndexes: number[], updatedDescriptionIndexes: number[], updatedCategoryIndexes: number[]) => {
     if (!state.products.length || !state.importResult) {
       return;
     }
@@ -295,8 +304,10 @@ export function createApp(root: HTMLElement): void {
         state.products,
         updatedSeoIndexes,
         updatedDescriptionIndexes,
+        updatedCategoryIndexes,
         state.importResult.columnMap
-      )
+      ),
+      state.importResult.delimiter
     );
     const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -312,11 +323,38 @@ export function createApp(root: HTMLElement): void {
     updateProductSet(foundProducts, 'No hay cartas encontradas para actualizar.');
   };
 
+  const updateAllFoundCategories = () => {
+    if (!state.products.length || !state.importResult || state.isScanningUnmatched) {
+      return;
+    }
+
+    const foundProductsWithCategories = state.products.filter((product) => (
+      product.suggestion.match.status === 'found' && hasCategorySuggestionValue(product)
+    ));
+
+    if (!foundProductsWithCategories.length) {
+      setState({ apiMessage: 'No hay categorias encontradas para actualizar.' });
+      return;
+    }
+
+    const nextCategoryIndexes = mergeIndexes(
+      state.updatedCategoryIndexes,
+      foundProductsWithCategories.map((product) => product.sourceIndex)
+    );
+
+    setState({
+      updatedCategoryIndexes: nextCategoryIndexes,
+      apiMessage: 'Actualizacion masiva de categorias lista. Productos actualizados: ' + foundProductsWithCategories.length
+    });
+    downloadExportCsv(state.updatedSeoIndexes, state.updatedDescriptionIndexes, nextCategoryIndexes);
+  };
+
   const updateNeedsUpdateProducts = () => {
     const needsUpdateProducts = getNeedsUpdateProducts(
       state.products,
       state.updatedSeoIndexes,
-      state.updatedDescriptionIndexes
+      state.updatedDescriptionIndexes,
+      state.updatedCategoryIndexes
     );
     updateProductSet(needsUpdateProducts, 'No hay productos por actualizar.');
   };
@@ -334,6 +372,10 @@ export function createApp(root: HTMLElement): void {
       state.updatedDescriptionIndexes,
       targetProducts.filter(hasDescriptionSuggestionValue).map((product) => product.sourceIndex)
     );
+    const nextCategoryIndexes = mergeIndexes(
+      state.updatedCategoryIndexes,
+      targetProducts.filter(hasCategorySuggestionValue).map((product) => product.sourceIndex)
+    );
 
     if (!targetProducts.length) {
       setState({ apiMessage: emptyMessage });
@@ -343,9 +385,10 @@ export function createApp(root: HTMLElement): void {
     setState({
       updatedSeoIndexes: nextSeoIndexes,
       updatedDescriptionIndexes: nextDescriptionIndexes,
+      updatedCategoryIndexes: nextCategoryIndexes,
       apiMessage: 'Actualizacion masiva lista. Productos actualizados: ' + targetProducts.length
     });
-    downloadExportCsv(nextSeoIndexes, nextDescriptionIndexes);
+    downloadExportCsv(nextSeoIndexes, nextDescriptionIndexes, nextCategoryIndexes);
   };
 
 
@@ -384,7 +427,7 @@ export function createApp(root: HTMLElement): void {
   };
 
   const goToNextPage = () => {
-    const totalPages = getTotalPages(getPreviewProducts(state.products, state.previewFilter, state.updatedSeoIndexes, state.updatedDescriptionIndexes).length);
+    const totalPages = getTotalPages(getPreviewProducts(state.products, state.previewFilter, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.updatedCategoryIndexes).length);
     const nextPage = Math.min(totalPages, state.currentPage + 1);
     setState({ currentPage: nextPage });
   };
@@ -419,6 +462,7 @@ export function createApp(root: HTMLElement): void {
     root.querySelector<HTMLButtonElement>('#show-all')?.addEventListener('click', showAllProducts);
     root.querySelector<HTMLButtonElement>('#start-scanner')?.addEventListener('click', () => { void scanAllProductsForUnmatched(); });
     root.querySelector<HTMLButtonElement>('#bulk-update-found')?.addEventListener('click', updateAllFoundProducts);
+    root.querySelector<HTMLButtonElement>('#bulk-update-categories')?.addEventListener('click', updateAllFoundCategories);
     root.querySelector<HTMLButtonElement>('#bulk-update-needs')?.addEventListener('click', updateNeedsUpdateProducts);
     root.querySelector<HTMLButtonElement>('#reset-app')?.addEventListener('click', reset);
     root.querySelector<HTMLButtonElement>('#preview-prev')?.addEventListener('click', goToPreviousPage);
@@ -442,13 +486,13 @@ function layout(state: AppState): string {
     '<div class="app-shell">',
     '<header class="topbar"><div class="topbar__content">',
     '<div class="brand"><h1 class="brand__name">Pokestop SEO Builder</h1><p class="brand__tagline">Generador local de columnas SEO para catalogos de Tienda Nube.</p></div>',
-    '<div class="status-pill">Sprint 4</div>',
+    '<div class="status-pill">Sprint 6</div>',
     '</div></header>',
     '<main class="workspace">',
     importSection(state),
     summarySection(state),
     apiStatusSection(state),
-    previewSection(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.currentPage, state.previewFilter),
+    previewSection(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.updatedCategoryIndexes, state.currentPage, state.previewFilter),
     '</main></div>'
   ].join('');
 }
@@ -476,6 +520,7 @@ function importSection(state: AppState): string {
     '<div class="result-actions" aria-label="Acciones sobre resultados">',
     '<button class="button button--secondary" id="start-scanner" type="button" ' + scannerDisabled + '>Iniciar scanner</button>',
     '<button class="button button--secondary" id="bulk-update-found" type="button" ' + bulkUpdateDisabled + '>Actualizar todos los encontrados</button>',
+    '<button class="button button--secondary" id="bulk-update-categories" type="button" ' + bulkUpdateDisabled + '>Actualizar categorias encontradas</button>',
     '<button class="button button--secondary" id="bulk-update-needs" type="button" ' + bulkUpdateDisabled + '>Actualizar por actualizar</button>',
     '<button class="button button--secondary" id="show-needs-update" type="button" ' + resultActionsDisabled + '>Mostrar por actualizar</button>',
     '<button class="button button--secondary" id="show-unmatched" type="button" ' + resultActionsDisabled + '>Mostrar no encontrados</button>',
@@ -503,9 +548,10 @@ function summarySection(state: AppState): string {
     metric('Productos validos', String(state.products.length)),
     metric('SEO actualizados', String(state.updatedSeoIndexes.length)),
     metric('Descripciones actualizadas', String(state.updatedDescriptionIndexes.length)),
+    metric('Categorias actualizadas', String(state.updatedCategoryIndexes.length)),
     metric('API encontradas', String(state.products.filter((product) => product.suggestion.match.status === 'found').length)),
     metric('Consultadas API', String(state.products.filter((product) => product.suggestion.match.status !== 'pending').length)),
-    metric('Por actualizar', String(getNeedsUpdateProducts(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes).length)),
+    metric('Por actualizar', String(getNeedsUpdateProducts(state.products, state.updatedSeoIndexes, state.updatedDescriptionIndexes, state.updatedCategoryIndexes).length)),
     metric('Por corregir', String(getUnmatchedProducts(state.products).length)),
     metric('Variantes omitidas', String(state.omittedVariantRows)),
     metric('Col. titulo SEO', detected?.seoTitle ?? 'No detectada'),
@@ -519,6 +565,7 @@ function previewSection(
   products: EnrichedProduct[],
   updatedSeoIndexes: number[],
   updatedDescriptionIndexes: number[],
+  updatedCategoryIndexes: number[],
   currentPage: number,
   previewFilter: PreviewFilter
 ): string {
@@ -526,7 +573,7 @@ function previewSection(
     return '<section class="empty-state">Importa un archivo para ver la grilla comparativa.</section>';
   }
 
-  const previewProducts = getPreviewProducts(products, previewFilter, updatedSeoIndexes, updatedDescriptionIndexes);
+  const previewProducts = getPreviewProducts(products, previewFilter, updatedSeoIndexes, updatedDescriptionIndexes, updatedCategoryIndexes);
 
   if (!previewProducts.length) {
     return '<section class="empty-state">No hay productos para mostrar con el filtro actual.</section>';
@@ -534,6 +581,7 @@ function previewSection(
 
   const updatedSeoSet = new Set(updatedSeoIndexes);
   const updatedDescriptionSet = new Set(updatedDescriptionIndexes);
+  const updatedCategorySet = new Set(updatedCategoryIndexes);
   const totalPages = getTotalPages(previewProducts.length);
   const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
   const startIndex = (safeCurrentPage - 1) * pageSize;
@@ -542,7 +590,8 @@ function previewSection(
   const rows = visibleProducts.map((product) => productRow(
     product,
     updatedSeoSet.has(product.sourceIndex),
-    updatedDescriptionSet.has(product.sourceIndex)
+    updatedDescriptionSet.has(product.sourceIndex),
+    updatedCategorySet.has(product.sourceIndex)
   )).join('');
 
   return [
@@ -551,23 +600,28 @@ function previewSection(
     paginationControls(safeCurrentPage, totalPages),
     '</div>',
     '<div class="panel__body"><div class="table-wrap"><table class="seo-grid">',
-    '<thead><tr><th>Producto</th><th>API</th><th>Match</th><th>Titulo SEO actual</th><th>Descripcion SEO actual</th><th>Titulo SEO sugerido</th><th>Descripcion SEO sugerida</th><th>Descripcion actual</th><th>Descripcion mejorada</th><th>Estado SEO</th><th>Accion SEO</th><th>Estado descripcion</th><th>Accion descripcion</th></tr></thead>',
+    '<thead><tr><th>Producto</th><th>API</th><th>Match</th><th>Categoria actual</th><th>Categoria sugerida</th><th>Estado categoria</th><th>Titulo SEO actual</th><th>Descripcion SEO actual</th><th>Titulo SEO sugerido</th><th>Descripcion SEO sugerida</th><th>Descripcion actual</th><th>Descripcion mejorada</th><th>Estado SEO</th><th>Accion SEO</th><th>Estado descripcion</th><th>Accion descripcion</th></tr></thead>',
     '<tbody>' + rows + '</tbody>',
     '</table></div></div></section>'
   ].join('');
 }
 
-function productRow(product: EnrichedProduct, isSeoUpdated: boolean, isDescriptionUpdated: boolean): string {
+function productRow(product: EnrichedProduct, isSeoUpdated: boolean, isDescriptionUpdated: boolean, isCategoryUpdated: boolean): string {
   const hasSeoSuggestion = hasSeoSuggestionValues(product);
   const hasDescriptionSuggestion = hasDescriptionSuggestionValue(product);
+  const hasCategorySuggestion = hasCategorySuggestionValue(product);
   const isSeoReady = isSeoUpdated || isCurrentSeoReady(product);
   const isDescriptionReady = isDescriptionUpdated || isCurrentDescriptionReady(product);
+  const isCategoryReady = isCategoryUpdated || isCurrentCategoryReady(product);
 
   return [
     '<tr>',
     '<td><div class="product-name">' + escapeHtml(product.name) + '</div><div class="muted">' + escapeHtml(product.sku || 'Sin SKU') + '</div></td>',
     '<td>' + apiBadge(product) + '</td>',
     '<td>' + matchSummary(product) + confirmMatchButton(product) + '</td>',
+    '<td>' + valueOrEmpty(product.category) + '</td>',
+    '<td>' + categoryValueOrEmpty(product.suggestion.suggestedCategories) + '</td>',
+    '<td>' + statusBadge(isCategoryReady, hasCategorySuggestion) + '</td>',
     '<td>' + valueOrEmpty(product.currentSeoTitle) + '</td>',
     '<td>' + valueOrEmpty(product.currentSeoDescription) + '</td>',
     '<td>' + valueOrEmpty(product.suggestion.suggestedSeoTitle) + '</td>',
@@ -628,6 +682,21 @@ function confirmMatchButton(product: EnrichedProduct): string {
   return '<button class="button button--primary button--small match-action" type="button" data-confirm-match="' + product.sourceIndex + '">Confirmar</button>';
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message || error.name || 'Error desconocido';
+  }
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return 'Error desconocido';
+  }
+}
 function buildCatalog(importResult: ImportResult): CatalogBuildResult {
   const enrichedProducts = enrichProducts(importResult.rows, importResult.columnMap);
   const products = enrichedProducts.filter((product) => hasValidProductName(product.name));
@@ -640,6 +709,9 @@ function buildCatalog(importResult: ImportResult): CatalogBuildResult {
       .map((product) => product.sourceIndex),
     updatedDescriptionIndexes: products
       .filter((product) => isReadyStatus(product.row['Estado Descripcion']) || isUpdatedStatus(product.row['Estado Descripcion']) || isImprovedStatus(product.row['Estado Descripcion']))
+      .map((product) => product.sourceIndex),
+    updatedCategoryIndexes: products
+      .filter((product) => isReadyStatus(product.row['Estado Categoria']) || isUpdatedStatus(product.row['Estado Categoria']))
       .map((product) => product.sourceIndex)
   };
 }
@@ -669,6 +741,7 @@ function actionButton(kind: 'seo' | 'description', sourceIndex: number, isReady:
     return '<button class="button button--primary button--small" type="button" data-update-seo="' + sourceIndex + '">Actualizar SEO</button>';
   }
 
+
   return '<button class="button button--primary button--small" type="button" data-update-description="' + sourceIndex + '">Actualizar descripcion</button>';
 }
 
@@ -690,8 +763,28 @@ function isCurrentDescriptionReady(product: EnrichedProduct): boolean {
   return normalizeComparableValue(product.currentDescription) === normalizeComparableValue(product.suggestion.improvedDescriptionHtml);
 }
 
+function isCurrentCategoryReady(product: EnrichedProduct): boolean {
+  if (!hasCategorySuggestionValue(product)) {
+    return false;
+  }
+
+  const currentCategories = normalizeCategoryValues(product.category);
+  const suggestedCategories = normalizeCategoryValues(product.suggestion.suggestedCategories.join(','));
+
+  return currentCategories.length === suggestedCategories.length
+    && currentCategories.every((category, index) => category === suggestedCategories[index]);
+}
+
 function normalizeComparableValue(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeCategoryValues(value: string): string[] {
+  return value
+    .split(/[,;\n]+/)
+    .map((category) => normalizeComparableValue(category).toLowerCase())
+    .filter(Boolean)
+    .sort();
 }
 
 function mergeIndexes(currentIndexes: number[], newIndexes: number[]): number[] {
@@ -702,14 +795,15 @@ function getPreviewProducts(
   products: EnrichedProduct[],
   previewFilter: PreviewFilter,
   updatedSeoIndexes: number[] = [],
-  updatedDescriptionIndexes: number[] = []
+  updatedDescriptionIndexes: number[] = [],
+  updatedCategoryIndexes: number[] = []
 ): EnrichedProduct[] {
   if (previewFilter === 'unmatched') {
     return getUnmatchedProducts(products);
   }
 
   if (previewFilter === 'needs_update') {
-    return getNeedsUpdateProducts(products, updatedSeoIndexes, updatedDescriptionIndexes);
+    return getNeedsUpdateProducts(products, updatedSeoIndexes, updatedDescriptionIndexes, updatedCategoryIndexes);
   }
 
   return products;
@@ -730,10 +824,12 @@ function previewTitle(previewFilter: PreviewFilter): string {
 function getNeedsUpdateProducts(
   products: EnrichedProduct[],
   updatedSeoIndexes: number[] = [],
-  updatedDescriptionIndexes: number[] = []
+  updatedDescriptionIndexes: number[] = [],
+  updatedCategoryIndexes: number[] = []
 ): EnrichedProduct[] {
   const updatedSeoSet = new Set(updatedSeoIndexes);
   const updatedDescriptionSet = new Set(updatedDescriptionIndexes);
+  const updatedCategorySet = new Set(updatedCategoryIndexes);
 
   return products.filter((product) => {
     const hasSeoPending = hasSeoSuggestionValues(product)
@@ -742,8 +838,11 @@ function getNeedsUpdateProducts(
     const hasDescriptionPending = hasDescriptionSuggestionValue(product)
       && !updatedDescriptionSet.has(product.sourceIndex)
       && !isCurrentDescriptionReady(product);
+    const hasCategoryPending = hasCategorySuggestionValue(product)
+      && !updatedCategorySet.has(product.sourceIndex)
+      && !isCurrentCategoryReady(product);
 
-    return product.suggestion.match.status === 'found' && (hasSeoPending || hasDescriptionPending);
+    return product.suggestion.match.status === 'found' && (hasSeoPending || hasDescriptionPending || hasCategoryPending);
   });
 }
 
@@ -811,6 +910,10 @@ function valueOrEmpty(value: string): string {
 
 function htmlValueOrEmpty(value: string): string {
   return value ? '<code class="html-preview">' + escapeHtml(value) + '</code>' : '<span class="muted">Sin dato</span>';
+}
+
+function categoryValueOrEmpty(values: string[]): string {
+  return values.length ? '<code class="html-preview">' + escapeHtml(values.join(', ')) + '</code>' : '<span class="muted">Sin dato</span>';
 }
 
 function buildExportFileName(fileName: string): string {
