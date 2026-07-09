@@ -486,7 +486,7 @@ function layout(state: AppState): string {
     '<div class="app-shell">',
     '<header class="topbar"><div class="topbar__content">',
     '<div class="brand"><h1 class="brand__name">Pokestop SEO Builder</h1><p class="brand__tagline">Generador local de columnas SEO para catalogos de Tienda Nube.</p></div>',
-    '<div class="status-pill">Sprint 6</div>',
+    '<div class="status-pill">Sprint 7</div>',
     '</div></header>',
     '<main class="workspace">',
     importSection(state),

@@ -72,10 +72,10 @@ function buildInfoTable(card: TcgDexCard): string {
     ['Numero de carta', card.localId],
     ['Rareza', buildRarityValue(card), true],
     [buildHelpLabel('Estado', 'https://pokestop.cl/estado-de-las-cartas', 'Ver mas sobre estados de las cartas'), 'NM (Near Mint)', true],
-    ['Supertipo', card.supertype || card.category],
+    ['Supertipo', buildSupertypeValue(card), true],
     ['Subtipos', buildSubtypeValue(card), true],
-    ['Tipo', card.types?.join(', ')],
-    ['Etapa', card.stage],
+    ['Tipo', buildPokemonTypesValue(card), true],
+    ['Etapa', buildPokemonStageValue(card), true],
     ['HP', card.hp ? String(card.hp) : ''],
     ['Pokedex', buildPokedexValue(card), true],
     [buildHelpLabel('Marca de regulacion', 'https://pokestop.cl/regulacion-cartas', 'Ver mas sobre la regulacion de las cartas'), card.regulationMark, true],
@@ -98,10 +98,19 @@ function buildExpansionValue(card: TcgDexCard): string {
 function buildRarityValue(card: TcgDexCard): string {
   const rarity = normalizeKnownRarity(card.rarity ?? '');
   const label = card.rarity || rarity;
-  const url = rarity && !isPromoCard(card) ? 'https://pokestop.cl/singles/rareza/' + slugifySetName(rarity) + '/' : '';
+  const url = rarity ? 'https://pokestop.cl/singles/rareza/' + getRaritySlug(rarity, card) + '/' : '';
 
   return url
     ? buildCategoryLink(url, label)
+    : escapeHtml(label);
+}
+
+function buildSupertypeValue(card: TcgDexCard): string {
+  const label = card.supertype || card.category || '';
+  const category = findSupertypeCategory(card);
+
+  return category
+    ? buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/' + category.slug + '/', label || category.label)
     : escapeHtml(label);
 }
 
@@ -120,6 +129,28 @@ function buildSubtypeValue(card: TcgDexCard): string {
   }
 
   return buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/trainers/' + trainerCategory.slug + '/', trainerCategory.label);
+}
+
+function buildPokemonTypesValue(card: TcgDexCard): string {
+  if (!isPokemonCard(card)) {
+    return escapeHtml(card.types?.join(', ') ?? '');
+  }
+
+  return (card.types ?? [])
+    .map((type) => buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/pokemon/tipo/' + slugifySetName(type) + '/', type))
+    .join(', ');
+}
+
+function buildPokemonStageValue(card: TcgDexCard): string {
+  if (!card.stage) {
+    return '';
+  }
+
+  if (!isPokemonCard(card)) {
+    return escapeHtml(card.stage);
+  }
+
+  return buildCategoryLink('https://pokestop.cl/singles/tipo-de-carta/pokemon/etapa/' + slugifySetName(card.stage) + '/', card.stage);
 }
 
 function buildPokedexValue(card: TcgDexCard): string {
@@ -179,13 +210,13 @@ function buildEditionCategory(card: TcgDexCard): string {
 }
 
 function buildRarityCategory(card: TcgDexCard): string {
-  if (isPromoCard(card)) {
+  const rarity = normalizeKnownRarity(card.rarity ?? '');
+
+  if (!rarity) {
     return '';
   }
 
-  const rarity = normalizeKnownRarity(card.rarity ?? '');
-
-  return rarity ? 'Singles > Rareza > ' + rarity : '';
+  return isPromoCard(card) ? 'Singles > Rareza > Promos' : 'Singles > Rareza > ' + rarity;
 }
 
 function buildCardTypeCategories(card: TcgDexCard): string[] {
@@ -193,15 +224,20 @@ function buildCardTypeCategories(card: TcgDexCard): string[] {
   const subtypes = card.subtypes ?? [];
   const normalizedSubtypes = subtypes.map(normalizeText);
   const categories: string[] = [];
+  const supertypeCategory = findSupertypeCategory(card);
+
+  if (supertypeCategory) {
+    categories.push('Singles > Tipo de Carta > ' + supertypeCategory.label);
+  }
 
   if (supertype.includes('pokemon')) {
-    categories.push('Singles > Tipo de Carta > Pokémon');
-
     const pokemonSubtype = findPokemonSubtype(normalizedSubtypes, card);
 
     if (pokemonSubtype) {
-      categories.push('Singles > Tipo de Carta > Pokémon > ' + pokemonSubtype);
+      categories.push('Singles > Tipo de Carta > Pokemon > ' + pokemonSubtype);
     }
+    categories.push(...buildPokemonTypeCategories(card));
+    categories.push(...buildPokemonStageCategories(card));
   } else if (isTrainerCard(card, normalizedSubtypes)) {
     const trainerCategory = findTrainerCategory(normalizedSubtypes, card);
     categories.push('Singles > Tipo de Carta > Trainers' + (trainerCategory ? ' > ' + trainerCategory.label : ''));
@@ -210,6 +246,16 @@ function buildCardTypeCategories(card: TcgDexCard): string[] {
   }
 
   return categories;
+}
+
+function buildPokemonTypeCategories(card: TcgDexCard): string[] {
+  return (card.types ?? [])
+    .filter(Boolean)
+    .map((type) => 'Singles > Tipo de Carta > Pokemon > Tipo > ' + type);
+}
+
+function buildPokemonStageCategories(card: TcgDexCard): string[] {
+  return card.stage ? ['Singles > Tipo de Carta > Pokemon > Etapa > ' + card.stage] : [];
 }
 
 function buildPokedexCategories(card: TcgDexCard): string[] {
@@ -292,8 +338,8 @@ function normalizeKnownRarity(value: string): string {
     ['rare holo', 'Rare Holo'],
     ['amazing rare', 'Amazing Rare'],
     ['radiant rare', 'Radiant Rare'],
-    ['common', 'Common'],
     ['uncommon', 'Uncommon'],
+    ['common', 'Common'],
     ['rare', 'Rare']
   ];
   const match = rules.find(([needle]) => normalized.includes(needle));
@@ -365,6 +411,30 @@ function isTrainerCard(card: TcgDexCard, normalizedSubtypes = (card.subtypes ?? 
   return supertype.includes('trainer') || normalizedSubtypes.some(isTrainerSubtype);
 }
 
+function isPokemonCard(card: TcgDexCard): boolean {
+  const supertype = normalizeText(card.supertype || card.category || '');
+
+  return supertype.includes('pokemon');
+}
+
+function findSupertypeCategory(card: TcgDexCard): { label: string; slug: string } | undefined {
+  const supertype = normalizeText(card.supertype || card.category || '');
+
+  if (supertype.includes('pokemon')) {
+    return { label: 'Pokemon', slug: 'pokemon' };
+  }
+
+  if (supertype.includes('trainer')) {
+    return { label: 'Trainers', slug: 'trainers' };
+  }
+
+  if (supertype.includes('energy')) {
+    return { label: 'Energias', slug: 'energias' };
+  }
+
+  return undefined;
+}
+
 function findTrainerCategory(normalizedSubtypes: string[], card?: TcgDexCard): { label: string; slug: string } | undefined {
   const normalizedName = normalizeText(card?.name ?? '');
 
@@ -389,6 +459,14 @@ function findTrainerCategory(normalizedSubtypes: string[], card?: TcgDexCard): {
   }
 
   return undefined;
+}
+
+function getRaritySlug(rarity: string, card: TcgDexCard): string {
+  if (isPromoCard(card) || normalizeText(rarity) === 'promo') {
+    return 'promos';
+  }
+
+  return slugifySetName(rarity);
 }
 
 function getPokedexRegion(dexId: number): string {
